@@ -29,6 +29,42 @@ def generate_new_id(category, df):
     
     return f"{prefix}{str(max_num + 1).zfill(4)}"
 
+def merge_inventory_duplicates(df):
+    """
+    掃描庫存表，將相同項目合併。
+    """
+    if df.empty: return df, 0
+
+    group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
+    
+    df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
+    df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
+    
+    original_count = len(df)
+    new_rows = []
+    
+    grouped = df.groupby(group_cols, sort=False, as_index=False)
+    
+    for _, group in grouped:
+        if len(group) == 1:
+            new_rows.append(group.iloc[0])
+        else:
+            total_qty = group['庫存(顆)'].sum()
+            total_value = (group['庫存(顆)'] * group['單顆成本']).sum()
+            avg_cost = total_value / total_qty if total_qty > 0 else 0
+            
+            base_row = group.sort_values('編號').iloc[0].copy()
+            base_row['庫存(顆)'] = total_qty
+            base_row['單顆成本'] = avg_cost
+            base_row['進貨日期'] = group['進貨日期'].max()
+            
+            new_rows.append(base_row)
+            
+    new_df = pd.DataFrame(new_rows)
+    merged_count = original_count - len(new_df)
+    
+    return new_df, merged_count
+
 # ==========================================
 # 2. 設定與資料庫初始化
 # ==========================================
@@ -130,14 +166,27 @@ if page == "📦 庫存管理與進貨":
                     st.success(f"新增成功：{new_id}")
                     st.rerun()
 
+    # ★★★ 新增：自動合併按鈕 ★★★
+    col_msg, col_btn = st.columns([3, 1])
+    with col_msg:
+        st.caption("提示：若有相同分類、名稱、規格的商品，可使用自動合併整理庫存。")
+    with col_btn:
+        if st.button("🧹 自動合併重複商品"):
+            merged_df, count = merge_inventory_duplicates(st.session_state['inventory'])
+            if count > 0:
+                st.session_state['inventory'] = merged_df
+                st.success(f"成功合併 {count} 筆！")
+                st.rerun()
+            else:
+                st.info("沒有重複項目")
+
     current_df = st.session_state['inventory']
-    # 這裡顯示時，依照五行排序，方便管理查看
     if not current_df.empty:
          current_df = current_df.sort_values(by=['分類', '五行', '名稱'])
 
     edited_df = st.data_editor(
         current_df, use_container_width=True, hide_index=True, num_rows="dynamic",
-        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商"),
+        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "庫存(顆)", "單顆成本", "進貨廠商"),
         disabled=["編號", "單顆成本"],
         column_config={
             "單顆成本": st.column_config.NumberColumn(format="$%.1f"),
@@ -149,7 +198,7 @@ if page == "📦 庫存管理與進貨":
         st.rerun()
 
 # ------------------------------------------
-# 頁面 B: 設計 (重點修改區)
+# 頁面 B: 設計 (扣庫存功能區)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.header("📿 手鍊設計工作檯")
@@ -160,7 +209,6 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # 分類篩選器
         cat_options = ["全部"] + ["天然石", "配件", "耗材"]
         selected_cat = st.radio("🔍 依分類篩選", cat_options, horizontal=True)
 
@@ -170,15 +218,10 @@ elif page == "🧮 設計與成本計算":
             valid_df = valid_df[valid_df['分類'] == selected_cat]
 
         if not valid_df.empty:
-            # ★★★ 核心修改：排序邏輯 (五行 -> 名稱) ★★★
-            # 填補空值以免排序報錯
             valid_df['五行'] = valid_df['五行'].fillna('未分類')
             valid_df['名稱'] = valid_df['名稱'].fillna('')
-            
-            # 執行排序
             valid_df = valid_df.sort_values(by=['五行', '名稱'])
             
-            # 建立顯示名稱：[五行] 名稱 (規格) | 編號
             valid_df['顯示名稱'] = (
                 "[" + valid_df['五行'].astype(str) + "] " +
                 valid_df['名稱'].astype(str) + 
@@ -186,10 +229,8 @@ elif page == "🧮 設計與成本計算":
                 " | " + valid_df['編號'].astype(str)
             )
             
-            # 這裡直接使用已經排好序的 '顯示名稱'，不要再 sort_values()
             option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'])
             
-            # 抓取資料
             item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
             
             st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
@@ -197,8 +238,9 @@ elif page == "🧮 設計與成本計算":
             qty = st.number_input("使用數量", 1)
             
             if st.button("⬇️ 加入設計圖", type="primary"):
-                # 直接寫死文字
+                # 將編號也存入，方便後續扣庫存
                 new_entry = {
+                    '編號': str(item['編號']),
                     '分類': str(item['分類']),
                     '名稱': str(item['名稱']),
                     '規格': f"{item['尺寸mm']}mm {item['形狀']}",
@@ -244,9 +286,40 @@ elif page == "🧮 設計與成本計算":
             final_total = total + labor + other
             st.metric("總成本", f"NT$ {final_total:.1f}")
             
-            if st.button("🗑️ 清空重算", type="secondary"):
-                st.session_state['current_design'] = []
-                st.rerun()
+            # ★★★ 新增：扣庫存與清空按鈕 ★★★
+            col_action1, col_action2 = st.columns(2)
+            
+            with col_action1:
+                # 扣庫存邏輯
+                if st.button("✅ 確認售出 (扣除庫存)", type="primary", use_container_width=True):
+                    inv_df = st.session_state['inventory']
+                    all_success = True
+                    
+                    for row in design_data:
+                        target_id = row['編號']
+                        use_qty = row['使用數量']
+                        
+                        # 找對應的庫存行
+                        idx_list = inv_df.index[inv_df['編號'].astype(str) == target_id].tolist()
+                        
+                        if idx_list:
+                            idx = idx_list[0]
+                            current_stock = inv_df.at[idx, '庫存(顆)']
+                            inv_df.at[idx, '庫存(顆)'] = current_stock - use_qty
+                        else:
+                            st.error(f"找不到編號 {target_id}，無法扣除")
+                            all_success = False
+                    
+                    if all_success:
+                        st.session_state['inventory'] = inv_df
+                        st.session_state['current_design'] = [] # 售出後自動清空清單
+                        st.toast("🎉 售出成功！庫存已更新", icon="✅")
+                        st.rerun()
+
+            with col_action2:
+                if st.button("🗑️ 清空重算", type="secondary", use_container_width=True):
+                    st.session_state['current_design'] = []
+                    st.rerun()
                 
             txt = f"【報價單】總計 ${final_total:.0f}\n"
             for _, row in design_df.iterrows():
