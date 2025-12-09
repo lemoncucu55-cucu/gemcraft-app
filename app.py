@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-import io
 import os
 
 # ==========================================
-# 1. 核心邏輯區 (函式)
+# 1. 核心邏輯區
 # ==========================================
 
 def generate_new_id(category, df):
-    """產生單一新編號"""
     prefix_map = {'天然石': 'ST', '配件': 'AC', '耗材': 'OT'}
     if category not in prefix_map: return "N/A"
     
@@ -30,40 +28,6 @@ def generate_new_id(category, df):
         except: pass
     
     return f"{prefix}{str(max_num + 1).zfill(4)}"
-
-def merge_inventory_duplicates(df):
-    """合併重複庫存"""
-    if df.empty: return df, 0
-
-    group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
-    
-    df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
-    df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
-    
-    original_count = len(df)
-    new_rows = []
-    
-    grouped = df.groupby(group_cols, sort=False, as_index=False)
-    
-    for _, group in grouped:
-        if len(group) == 1:
-            new_rows.append(group.iloc[0])
-        else:
-            total_qty = group['庫存(顆)'].sum()
-            total_value = (group['庫存(顆)'] * group['單顆成本']).sum()
-            avg_cost = total_value / total_qty if total_qty > 0 else 0
-            
-            base_row = group.sort_values('編號').iloc[0].copy()
-            base_row['庫存(顆)'] = total_qty
-            base_row['單顆成本'] = avg_cost
-            base_row['進貨日期'] = group['進貨日期'].max()
-            
-            new_rows.append(base_row)
-            
-    new_df = pd.DataFrame(new_rows)
-    merged_count = original_count - len(new_df)
-    
-    return new_df, merged_count
 
 # ==========================================
 # 2. 設定與資料庫初始化
@@ -90,11 +54,10 @@ if 'inventory' not in st.session_state:
         try:
             df_init = pd.read_csv(DEFAULT_CSV_FILE)
             df_init['編號'] = df_init['編號'].astype(str)
-            if set(COLUMNS).issubset(df_init.columns):
-                st.session_state['inventory'] = df_init
-            else:
-                st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
-        except Exception:
+            # 確保數字欄位正確
+            df_init['單顆成本'] = pd.to_numeric(df_init['單顆成本'], errors='coerce').fillna(0)
+            st.session_state['inventory'] = df_init
+        except:
             st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else:
         st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
@@ -109,172 +72,84 @@ if 'current_design' not in st.session_state:
 st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
 st.title("💎 GemCraft 庫存管理系統")
 
-# --- 側邊欄 ---
 with st.sidebar:
     st.header("功能導航")
     page = st.radio("前往", ["📦 庫存管理與進貨", "🧮 設計與成本計算"])
-    
     st.divider()
-    st.header("💾 資料備份與還原")
-    
+    st.header("💾 資料備份")
     df_to_download = st.session_state['inventory']
     if not df_to_download.empty:
         csv = df_to_download.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 下載庫存表 (CSV)",
-            data=csv,
-            file_name=f'inventory_backup_{date.today()}.csv',
-            mime='text/csv',
-            type="primary"
-        )
-    else:
-        st.caption("目前無資料可下載")
-
+        st.download_button("📥 下載庫存表 (CSV)", csv, f'inventory_backup_{date.today()}.csv', "text/csv")
+    
     uploaded_file = st.file_uploader("📤 上傳復原庫存 (CSV)", type=['csv'])
     if uploaded_file is not None:
         try:
             uploaded_df = pd.read_csv(uploaded_file)
-            if set(COLUMNS).issubset(uploaded_df.columns):
-                uploaded_df['編號'] = uploaded_df['編號'].astype(str)
-                if st.button("⚠️ 確認覆蓋目前資料"):
-                    st.session_state['inventory'] = uploaded_df
-                    st.success("資料已還原！")
-                    st.rerun()
-            else:
-                st.error("格式錯誤！")
-        except Exception as e:
-            st.error(f"讀取失敗: {e}")
+            uploaded_df['編號'] = uploaded_df['編號'].astype(str)
+            if st.button("⚠️ 確認覆蓋目前資料"):
+                st.session_state['inventory'] = uploaded_df
+                st.success("資料已還原！")
+                st.rerun()
+        except: st.error("讀取失敗")
 
 # ------------------------------------------
-# 頁面 A: 庫存管理與進貨
+# 頁面 A: 庫存管理
 # ------------------------------------------
 if page == "📦 庫存管理與進貨":
+    st.subheader("📦 庫存管理")
     
-    mode = st.radio("請選擇操作模式：", ["✨ 新增新品 (建立新編號)", "🔄 舊品補貨 (合併庫存/平均成本)"], horizontal=True)
-    
-    if mode == "✨ 新增新品 (建立新編號)":
+    with st.expander("📝 點擊展開：新增進貨資料", expanded=False):
         with st.form("add_new_form", clear_on_submit=True):
-            st.caption("建立全新的商品資料，系統會產生新的編號。")
             c1, c2, c3 = st.columns(3)
-            with c1: new_cat = st.selectbox("1. 分類", ["天然石", "配件", "耗材"])
-            with c2: new_name = st.text_input("2. 名稱", placeholder="例如：紫水晶")
-            with c3: new_size = st.number_input("3. 尺寸 (mm)", min_value=0.0, step=0.5, format="%.1f")
-
+            with c1: new_cat = st.selectbox("分類", ["天然石", "配件", "耗材"])
+            with c2: new_name = st.text_input("名稱", placeholder="例如：紫水晶")
+            with c3: new_size = st.number_input("尺寸 (mm)", 0.0, step=0.5, format="%.1f")
+            
             c4, c5, c6 = st.columns(3)
-            with c4: new_shape = st.selectbox("4. 形狀", ["圓珠", "切角", "鑽切", "圓筒", "不規則", "造型"])
-            with c5: new_element = st.selectbox("5. 五行", ["金", "木", "水", "火", "土", "綜合"])
-            with c6: new_supplier = st.selectbox("6. 進貨廠商", SUPPLIERS)
-
+            with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "不規則", "造型"])
+            with c5: new_element = st.selectbox("五行", ["金", "木", "水", "火", "土", "綜合"])
+            with c6: new_supplier = st.selectbox("廠商", SUPPLIERS)
+            
             c7, c8, c9 = st.columns(3)
-            with c7: new_price = st.number_input("7. 進貨總價", min_value=0)
-            with c8: new_qty = st.number_input("8. 進貨數量 (顆)", min_value=1)
-            with c9: new_date = st.date_input("9. 進貨日期", value=date.today())
-
-            if st.form_submit_button("➕ 確認新增入庫", type="primary"):
-                if not new_name:
-                    st.error("❌ 請填寫名稱！")
+            with c7: new_price = st.number_input("進貨總價", 0)
+            with c8: new_qty = st.number_input("進貨數量", 1)
+            with c9: new_date = st.date_input("進貨日期", value=date.today())
+            
+            if st.form_submit_button("➕ 確認新增"):
+                if not new_name: st.error("需填寫名稱")
                 else:
                     new_id = generate_new_id(new_cat, st.session_state['inventory'])
                     unit_cost = new_price / new_qty if new_qty > 0 else 0
-                    new_data = {
+                    new_row = {
                         '編號': new_id, '分類': new_cat, '名稱': new_name, '尺寸mm': new_size,
                         '形狀': new_shape, '五行': new_element, '進貨總價': new_price,
                         '進貨數量(顆)': new_qty, '進貨日期': new_date, '進貨廠商': new_supplier,
                         '庫存(顆)': new_qty, '單顆成本': unit_cost
                     }
-                    new_df = pd.DataFrame([new_data])
-                    st.session_state['inventory'] = pd.concat([st.session_state['inventory'], new_df], ignore_index=True)
-                    st.success(f"已新增：{new_id} {new_name}")
+                    st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_row])], ignore_index=True)
+                    st.success(f"新增成功：{new_id}")
                     st.rerun()
-
-    else: # 舊品補貨模式
-        st.info("💡 補貨模式會將「新進貨的金額」與「現有庫存」進行加權平均，算出新的成本。")
-        
-        df = st.session_state['inventory']
-        if df.empty:
-            st.warning("目前沒有任何庫存資料。")
-        else:
-            valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
-            valid_df['顯示名稱'] = valid_df['編號'].astype(str) + " | " + valid_df['名稱'] + " (" + valid_df['尺寸mm'].astype(str) + "mm)"
-            
-            with st.form("restock_form", clear_on_submit=True):
-                target_item_str = st.selectbox("搜尋要補貨的商品", valid_df['顯示名稱'].sort_values())
-                
-                c_r1, c_r2, c_r3 = st.columns(3)
-                with c_r1: restock_price = st.number_input("本次進貨總價", min_value=0)
-                with c_r2: restock_qty = st.number_input("本次進貨數量 (顆)", min_value=1)
-                with c_r3: restock_date = st.date_input("補貨日期", value=date.today())
-                
-                restock_supplier = st.selectbox("本次進貨廠商", SUPPLIERS)
-                
-                if st.form_submit_button("🔄 確認補貨並更新成本", type="primary"):
-                    target_id = target_item_str.split(" | ")[0]
-                    idx = df.index[df['編號'] == target_id].tolist()[0]
-                    
-                    old_stock = df.at[idx, '庫存(顆)']
-                    old_cost = df.at[idx, '單顆成本']
-                    
-                    old_total_value = old_stock * old_cost
-                    new_total_value = old_total_value + restock_price
-                    new_total_qty = old_stock + restock_qty
-                    new_avg_cost = new_total_value / new_total_qty if new_total_qty > 0 else 0
-                    
-                    df.at[idx, '庫存(顆)'] = new_total_qty
-                    df.at[idx, '單顆成本'] = new_avg_cost
-                    df.at[idx, '進貨日期'] = restock_date
-                    df.at[idx, '進貨廠商'] = restock_supplier
-                    
-                    st.session_state['inventory'] = df
-                    st.success(f"補貨成功！{target_id} 庫存變更為 {new_total_qty} 顆，新平均成本 ${new_avg_cost:.1f}")
-                    st.rerun()
-
-    st.divider()
-
-    # --- Part 2: 庫存總表 ---
-    st.markdown("### 📊 目前庫存清單")
-    
-    col_header, col_merge_btn = st.columns([4, 1])
-    with col_header:
-        st.caption("提示：直接修改表格僅會更新數值，不會執行平均成本計算。若要進貨請使用上方表單。")
-    with col_merge_btn:
-        if st.button("🧹 自動合併重複商品"):
-            merged_df, count = merge_inventory_duplicates(st.session_state['inventory'])
-            if count > 0:
-                st.session_state['inventory'] = merged_df
-                st.success(f"成功合併 {count} 筆重複資料！")
-                st.rerun()
-            else:
-                st.info("檢查完畢，沒有發現重複的商品。")
 
     current_df = st.session_state['inventory']
-    
     edited_df = st.data_editor(
-        current_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
-        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商", "進貨日期"),
+        current_df, use_container_width=True, hide_index=True, num_rows="dynamic",
+        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "庫存(顆)", "單顆成本", "進貨廠商"),
         disabled=["編號", "單顆成本"],
-        key="inventory_table",
         column_config={
             "單顆成本": st.column_config.NumberColumn(format="$%.1f"),
             "尺寸mm": st.column_config.NumberColumn(format="%.1f"),
         }
     )
-    
     if not edited_df.equals(current_df):
-        p_price = pd.to_numeric(edited_df['進貨總價'], errors='coerce').fillna(0)
-        p_qty = pd.to_numeric(edited_df['進貨數量(顆)'], errors='coerce').fillna(0)
-        edited_df['單顆成本'] = p_price / p_qty.replace(0, 1)
         st.session_state['inventory'] = edited_df
         st.rerun()
 
-
 # ------------------------------------------
-# 頁面 B: 設計與成本計算
+# 頁面 B: 設計 (重點修改區)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
-    st.header("手鍊設計工作檯")
+    st.header("📿 手鍊設計工作檯")
 
     col1, col2 = st.columns([1, 1.5])
 
@@ -282,102 +157,75 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        if not df.empty and '編號' in df.columns:
-            valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
-            if not valid_df.empty:
-                valid_df['顯示名稱'] = (valid_df['編號'].astype(str) + " | " + valid_df['名稱'].astype(str) + " (" + valid_df['尺寸mm'].astype(str) + "mm)")
-                option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
-                selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
-                
-                info_content = f"""
-                **{selected_item['名稱']}**
-                - 分類: `{selected_item['分類']}`
-                - 編號: `{selected_item['編號']}`
-                - 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}
-                - 庫存: **{selected_item['庫存(顆)']}** 顆
-                - 廠商: {selected_item['進貨廠商']}
-                """
-                st.info(info_content)
-                
-                unit_cost = selected_item['單顆成本']
-                st.metric("單顆成本", f"${unit_cost:.1f}")
-                
-                qty = st.number_input("使用數量", min_value=1, value=1)
-                
-                if st.button("⬇️ 加入設計圖", type="primary"):
-                    st.session_state['current_design'].append({
-                        '編號': selected_item['編號'],
-                        '使用數量': qty, # 這裡只存基本資料，剩下的交給下面自動補齊
-                    })
-                    st.rerun()
-            else: st.warning("目前沒有可用的庫存資料。")
-        else: st.warning("庫存是空的。")
+        # 建立選單
+        valid_df = df[df['編號'].notna()].copy()
+        if not valid_df.empty:
+            valid_df['顯示名稱'] = valid_df['編號'].astype(str) + " | " + valid_df['名稱'].astype(str) + " (" + valid_df['尺寸mm'].astype(str) + "mm)"
+            option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'].sort_values())
+            
+            # 抓取資料
+            item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
+            
+            # 顯示資訊
+            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
+            
+            qty = st.number_input("使用數量", 1)
+            
+            if st.button("⬇️ 加入設計圖", type="primary"):
+                # ★★★ 暴力解法：直接把所有欄位文字寫死存進去 ★★★
+                new_entry = {
+                    '分類': str(item['分類']),         # 強制存成字串
+                    '名稱': str(item['名稱']),         # 強制存成字串
+                    '規格': f"{item['尺寸mm']}mm {item['形狀']}", # 強制組合成字串
+                    '使用數量': int(qty),
+                    '單價': float(item['單顆成本']),
+                    '小計': float(item['單顆成本']) * int(qty)
+                }
+                st.session_state['current_design'].append(new_entry)
+                st.success("已加入！")
+                st.rerun()
+        else:
+            st.warning("庫存無資料")
 
     with col2:
-        st.subheader("2. 設計清單與成本")
+        st.subheader("2. 設計清單")
         
         design_data = st.session_state['current_design']
         
-        if design_data:
+        if len(design_data) > 0:
             design_df = pd.DataFrame(design_data)
             
-            # ★★★ 必殺技：每次顯示都重新去庫存表抓最新的分類、規格、單價 ★★★
-            # 這樣就算你之前的資料缺漏，這裡也會自動修復！
-            
-            # 1. 準備庫存對照表
-            inv_df = st.session_state['inventory'].copy()
-            inv_df['編號'] = inv_df['編號'].astype(str)
-            inv_df['規格'] = inv_df['尺寸mm'].astype(str) + "mm " + inv_df['形狀']
-            
-            # 2. 建立對應字典
-            map_cat = dict(zip(inv_df['編號'], inv_df['分類']))
-            map_name = dict(zip(inv_df['編號'], inv_df['名稱']))
-            map_spec = dict(zip(inv_df['編號'], inv_df['規格']))
-            map_cost = dict(zip(inv_df['編號'], inv_df['單顆成本']))
-            
-            # 3. 強制刷新設計清單的資料
-            design_df['編號'] = design_df['編號'].astype(str)
-            design_df['分類'] = design_df['編號'].map(map_cat).fillna("-")
-            design_df['名稱'] = design_df['編號'].map(map_name).fillna("未知商品")
-            design_df['規格'] = design_df['編號'].map(map_spec).fillna("-")
-            design_df['單價'] = design_df['編號'].map(map_cost).fillna(0)
-            
-            # 處理數量欄位 (相容舊資料)
-            if '使用數量' not in design_df.columns:
-                design_df['使用數量'] = design_df.get('數量', 1)
-            
-            design_df['小計'] = design_df['單價'] * design_df['使用數量']
-            
-            # 顯示表格
+            # ★★★ 強制指定欄位顯示順序 (絕對不會錯) ★★★
             st.dataframe(
-                design_df, 
-                use_container_width=True, 
+                design_df,
+                use_container_width=True,
                 hide_index=True,
                 column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
                 column_config={
-                    "單價": st.column_config.NumberColumn(format="$%.1f"), 
-                    "小計": st.column_config.NumberColumn(format="$%.1f")
+                    "單價": st.column_config.NumberColumn(format="$%.1f"),
+                    "小計": st.column_config.NumberColumn(format="$%.1f"),
                 }
             )
             
-            st.divider()
+            total = design_df['小計'].sum()
             
-            material_cost = design_df['小計'].sum()
+            st.divider()
             c_labor, c_other = st.columns(2)
-            with c_labor: labor_cost = st.number_input("工資 (元)", value=0)
-            with c_other: other_cost = st.number_input("雜支 (元)", value=0)
-            total_cost = material_cost + labor_cost + other_cost
-            st.markdown("### 💰 總成本合計")
-            st.metric(label="Total Cost", value=f"NT$ {total_cost:.1f}")
-            st.divider()
+            labor = c_labor.number_input("工資", 0)
+            other = c_other.number_input("雜支", 0)
             
-            if st.button("🗑️ 清空重新計算", type="primary"):
+            final_total = total + labor + other
+            st.metric("總成本", f"NT$ {final_total:.1f}")
+            
+            if st.button("🗑️ 清空重算", type="secondary"):
                 st.session_state['current_design'] = []
                 st.rerun()
                 
-            st.caption("📋 複製報價單：")
-            export_text = f"【成本單】總計 ${total_cost:.1f}\n"
-            for _, row in design_df.iterrows(): 
-                export_text += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
-            st.text_area("", export_text, height=150)
-        else: st.info("👈 請從左側選擇材料加入")
+            # 報價單文字生成
+            txt = f"【報價單】總計 ${final_total:.0f}\n"
+            for _, row in design_df.iterrows():
+                txt += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
+            st.text_area("複製文字", txt)
+            
+        else:
+            st.info("👈 清單是空的，請先加入材料")
