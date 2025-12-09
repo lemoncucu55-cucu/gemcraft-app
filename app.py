@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import io
 
 # ==========================================
 # 1. 核心邏輯區 (函式)
@@ -8,7 +9,7 @@ from datetime import date
 
 def generate_new_id(category, df):
     """
-    產生單一新編號 (用於表單送出時)
+    產生單一新編號
     """
     prefix_map = {
         '天然石': 'ST',
@@ -18,12 +19,13 @@ def generate_new_id(category, df):
     
     if category not in prefix_map:
         return "N/A"
-        
+    
     prefix = prefix_map[category]
         
     if df.empty:
         return f"{prefix}0001"
     
+    # 轉字串處理
     df_str = df.copy()
     df_str['編號'] = df_str['編號'].astype(str)
     
@@ -50,18 +52,20 @@ def generate_new_id(category, df):
 SUPPLIERS = [
     "小聰頭", "小聰頭-13", "小聰頭-千千", "小聰頭-子馨", "小聰頭-小宇", "小聰頭-尼克", "小聰頭-周三寶", "小聰頭-蒨",
     "永安", "石之靈", "多加市集", "決益X", "昇輝", "星辰Crystal", "珍珠包金", "格魯特", "御金坊",
-    "TB-天使街", "TB-東吳天然石坊", "TB-物物居", "TB-軒閣珠寶", "TB-鈦鋼潮牌", "TB-義烏卡樂芙", 
-    "TB-鼎喜", "TB-銀拍檔", "TB-廣州小銀子", "TB-慶和銀飾", "TB-賽維雅珠寶", "TB-ins網紅玻璃杯",
-    "TB-Mary", "TB-Super Search",
+    "淘-天使街", "淘-東吳天然石坊", "淘-物物居", "淘-軒閣珠寶", "淘-鈦鋼潮牌", "淘-義烏卡樂芙", 
+    "淘-鼎喜", "淘-銀拍檔", "淘-廣州小銀子", "淘-慶和銀飾", "淘-賽維雅珠寶", "淘-ins網紅玻璃杯",
+    "淘-Mary", "淘-Super Search",
     "祥玥", "雪霖", "晶格格", "愛你一生", "福祿壽銀飾", "億伙", "廠商", "寶城水晶", "Rich"
 ]
 
+# 定義標準欄位
+COLUMNS = [
+    '編號', '分類', '名稱', '尺寸mm', '形狀', '五行', 
+    '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
+]
+
 if 'inventory' not in st.session_state:
-    df = pd.DataFrame(columns=[
-        '編號', '分類', '名稱', '尺寸mm', '形狀', '五行', 
-        '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
-    ])
-    st.session_state['inventory'] = df
+    st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
 if 'current_design' not in st.session_state:
     st.session_state['current_design'] = []
@@ -73,7 +77,48 @@ if 'current_design' not in st.session_state:
 st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
 st.title("💎 GemCraft 庫存管理系統")
 
-page = st.sidebar.radio("功能選單", ["📦 庫存管理與進貨", "🧮 設計與成本計算"])
+# --- 側邊欄：功能選單與備份區 ---
+with st.sidebar:
+    st.header("功能導航")
+    page = st.radio("前往", ["📦 庫存管理與進貨", "🧮 設計與成本計算"])
+    
+    st.divider()
+    st.header("💾 資料備份與還原")
+    
+    # 1. 下載功能
+    df_to_download = st.session_state['inventory']
+    if not df_to_download.empty:
+        csv = df_to_download.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下載庫存表 (CSV)",
+            data=csv,
+            file_name=f'inventory_backup_{date.today()}.csv',
+            mime='text/csv',
+            type="primary"
+        )
+    else:
+        st.caption("目前無資料可下載")
+
+    # 2. 上傳功能
+    uploaded_file = st.file_uploader("📤 上傳復原庫存 (CSV)", type=['csv'])
+    if uploaded_file is not None:
+        try:
+            # 讀取 CSV
+            uploaded_df = pd.read_csv(uploaded_file)
+            
+            # 簡單檢查欄位是否正確
+            if set(COLUMNS).issubset(uploaded_df.columns):
+                # 確保編號是字串
+                uploaded_df['編號'] = uploaded_df['編號'].astype(str)
+                
+                if st.button("⚠️ 確認覆蓋目前資料"):
+                    st.session_state['inventory'] = uploaded_df
+                    st.success("資料已還原！")
+                    st.rerun()
+            else:
+                st.error("格式錯誤！請確認上傳的是本系統匯出的 CSV。")
+        except Exception as e:
+            st.error(f"讀取失敗: {e}")
 
 # ------------------------------------------
 # 頁面 A: 庫存管理與進貨
@@ -117,8 +162,6 @@ if page == "📦 庫存管理與進貨":
                 st.error("❌ 請填寫「名稱」！")
             else:
                 new_id = generate_new_id(new_cat, st.session_state['inventory'])
-                
-                # 計算單顆成本 (保持原始精度，顯示時再格式化)
                 unit_cost = new_price / new_qty if new_qty > 0 else 0
                 
                 new_data = {
@@ -157,10 +200,9 @@ if page == "📦 庫存管理與進貨":
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
-        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商", "進貨日期"),
+        column_order=COLUMNS[:8] + COLUMNS[9:], # 調整顯示順序
         disabled=["編號", "單顆成本"],
         key="inventory_table",
-        # ★★★ 設定顯示格式：保留 1 位小數 ★★★
         column_config={
             "單顆成本": st.column_config.NumberColumn(format="$%.1f"),
             "尺寸mm": st.column_config.NumberColumn(format="%.1f"),
@@ -184,7 +226,6 @@ elif page == "🧮 設計與成本計算":
 
     col1, col2 = st.columns([1, 1.5])
 
-    # --- 左邊：選材區 ---
     with col1:
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
@@ -215,7 +256,6 @@ elif page == "🧮 設計與成本計算":
                 st.info(info_content)
                 
                 unit_cost = selected_item['單顆成本']
-                # ★★★ 設定顯示格式：保留 1 位小數 ★★★
                 st.metric("單顆成本", f"${unit_cost:.1f}")
                 
                 qty = st.number_input("使用數量", min_value=1, value=1)
@@ -231,11 +271,10 @@ elif page == "🧮 設計與成本計算":
                     })
                     st.rerun()
             else:
-                 st.warning("目前沒有可用的庫存資料，請先新增。")
+                 st.warning("目前沒有可用的庫存資料。")
         else:
-            st.warning("庫存是空的，請先去「庫存管理」新增資料。")
+            st.warning("庫存是空的。")
 
-    # --- 右邊：計算結果區 ---
     with col2:
         st.subheader("2. 設計清單與成本")
         
@@ -247,7 +286,6 @@ elif page == "🧮 設計與成本計算":
                 use_container_width=True,
                 hide_index=True,
                 column_order=("編號", "名稱", "規格", "數量", "單價", "小計"),
-                # ★★★ 設定顯示格式：保留 1 位小數 ★★★
                 column_config={
                     "單價": st.column_config.NumberColumn(format="$%.1f"),
                     "小計": st.column_config.NumberColumn(format="$%.1f"),
@@ -267,7 +305,6 @@ elif page == "🧮 設計與成本計算":
             total_cost = material_cost + labor_cost + other_cost
 
             st.markdown("### 💰 總成本合計")
-            # ★★★ 設定顯示格式：保留 1 位小數 ★★★
             st.metric(label="Total Cost", value=f"NT$ {total_cost:.1f}")
 
             st.divider()
@@ -277,7 +314,6 @@ elif page == "🧮 設計與成本計算":
                 st.rerun()
                 
             st.caption("📋 複製報價單：")
-            # ★★★ 設定顯示格式：保留 1 位小數 ★★★
             export_text = f"【成本單】總計 ${total_cost:.1f}\n"
             for _, row in design_df.iterrows():
                 export_text += f"- {row['名稱']} ({row['規格']}) x{row['數量']}\n"
