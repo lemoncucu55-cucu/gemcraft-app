@@ -310,10 +310,10 @@ elif page == "🧮 設計與成本計算":
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     st.session_state['current_design'].append({
                         '編號': selected_item['編號'],
-                        '分類': selected_item['分類'], 
+                        '分類': selected_item['分類'], # 新增
                         '名稱': selected_item['名稱'],
-                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
-                        '使用數量': qty, 
+                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}", # 新增
+                        '使用數量': qty, # 新增
                         '單價': unit_cost,
                         '小計': unit_cost * qty
                     })
@@ -324,26 +324,38 @@ elif page == "🧮 設計與成本計算":
     with col2:
         st.subheader("2. 設計清單與成本")
         
-        # 這裡會判斷 session 中是否有資料
-        if st.session_state['current_design']:
-            design_df = pd.DataFrame(st.session_state['current_design'])
+        # ★★★ 自動修復邏輯：確保舊資料也能顯示新欄位 ★★★
+        design_data = st.session_state['current_design']
+        
+        if design_data:
+            design_df = pd.DataFrame(design_data)
             
-            # ★★★ 關鍵點：確認欄位是否存在，若舊資料沒有新欄位，會自動填入空白以免報錯 ★★★
-            for col in ['分類', '規格', '使用數量']:
-                if col not in design_df.columns:
-                    design_df[col] = "-"
+            # 強制檢查並補齊欄位，防止舊資料報錯或不顯示
+            if '分類' not in design_df.columns:
+                design_df['分類'] = "-"
+            if '規格' not in design_df.columns:
+                design_df['規格'] = "-"
+            if '使用數量' not in design_df.columns:
+                # 試著把舊的 '數量' 欄位搬過來，如果也沒有就填 0
+                if '數量' in design_df.columns:
+                    design_df['使用數量'] = design_df['數量']
+                else:
+                    design_df['使用數量'] = 0
             
+            # 顯示表格，強制依照你要的順序
             st.dataframe(
-                design_df, use_container_width=True, hide_index=True,
+                design_df, 
+                use_container_width=True, 
+                hide_index=True,
                 column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
                 column_config={
                     "單價": st.column_config.NumberColumn(format="$%.1f"), 
                     "小計": st.column_config.NumberColumn(format="$%.1f")
                 }
             )
+            
             st.divider()
             
-            # 計算總合
             if '小計' in design_df.columns:
                 material_cost = design_df['小計'].sum()
             else:
@@ -357,7 +369,7 @@ elif page == "🧮 設計與成本計算":
             st.metric(label="Total Cost", value=f"NT$ {total_cost:.1f}")
             st.divider()
             
-            if st.button("🗑️ 清空重新計算"):
+            if st.button("🗑️ 清空重新計算", type="primary"):
                 st.session_state['current_design'] = []
                 st.rerun()
                 
@@ -366,7 +378,7 @@ elif page == "🧮 設計與成本計算":
             for _, row in design_df.iterrows(): 
                 cat = row.get('分類', '')
                 spec = row.get('規格', '')
-                qty_used = row.get('使用數量', row.get('數量', 0))
+                qty_used = row.get('使用數量', 0)
                 export_text += f"- [{cat}] {row['名稱']} ({spec}) x{qty_used}\n"
             st.text_area("", export_text, height=150)
         else: st.info("👈 請從左側選擇材料加入")
