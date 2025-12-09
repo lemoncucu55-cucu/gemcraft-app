@@ -32,9 +32,7 @@ def generate_new_id(category, df):
     return f"{prefix}{str(max_num + 1).zfill(4)}"
 
 def merge_inventory_duplicates(df):
-    """
-    掃描庫存表，將相同項目合併。
-    """
+    """合併重複庫存"""
     if df.empty: return df, 0
 
     group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
@@ -85,7 +83,6 @@ COLUMNS = [
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
-# 設定預設讀取的檔案
 DEFAULT_CSV_FILE = 'inventory_backup_2025-12-09.csv'
 
 if 'inventory' not in st.session_state:
@@ -310,12 +307,7 @@ elif page == "🧮 設計與成本計算":
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     st.session_state['current_design'].append({
                         '編號': selected_item['編號'],
-                        '分類': selected_item['分類'], # 新增
-                        '名稱': selected_item['名稱'],
-                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}", # 新增
-                        '使用數量': qty, # 新增
-                        '單價': unit_cost,
-                        '小計': unit_cost * qty
+                        '使用數量': qty, # 這裡只存基本資料，剩下的交給下面自動補齊
                     })
                     st.rerun()
             else: st.warning("目前沒有可用的庫存資料。")
@@ -324,25 +316,39 @@ elif page == "🧮 設計與成本計算":
     with col2:
         st.subheader("2. 設計清單與成本")
         
-        # ★★★ 自動修復邏輯：確保舊資料也能顯示新欄位 ★★★
         design_data = st.session_state['current_design']
         
         if design_data:
             design_df = pd.DataFrame(design_data)
             
-            # 強制檢查並補齊欄位，防止舊資料報錯或不顯示
-            if '分類' not in design_df.columns:
-                design_df['分類'] = "-"
-            if '規格' not in design_df.columns:
-                design_df['規格'] = "-"
-            if '使用數量' not in design_df.columns:
-                # 試著把舊的 '數量' 欄位搬過來，如果也沒有就填 0
-                if '數量' in design_df.columns:
-                    design_df['使用數量'] = design_df['數量']
-                else:
-                    design_df['使用數量'] = 0
+            # ★★★ 必殺技：每次顯示都重新去庫存表抓最新的分類、規格、單價 ★★★
+            # 這樣就算你之前的資料缺漏，這裡也會自動修復！
             
-            # 顯示表格，強制依照你要的順序
+            # 1. 準備庫存對照表
+            inv_df = st.session_state['inventory'].copy()
+            inv_df['編號'] = inv_df['編號'].astype(str)
+            inv_df['規格'] = inv_df['尺寸mm'].astype(str) + "mm " + inv_df['形狀']
+            
+            # 2. 建立對應字典
+            map_cat = dict(zip(inv_df['編號'], inv_df['分類']))
+            map_name = dict(zip(inv_df['編號'], inv_df['名稱']))
+            map_spec = dict(zip(inv_df['編號'], inv_df['規格']))
+            map_cost = dict(zip(inv_df['編號'], inv_df['單顆成本']))
+            
+            # 3. 強制刷新設計清單的資料
+            design_df['編號'] = design_df['編號'].astype(str)
+            design_df['分類'] = design_df['編號'].map(map_cat).fillna("-")
+            design_df['名稱'] = design_df['編號'].map(map_name).fillna("未知商品")
+            design_df['規格'] = design_df['編號'].map(map_spec).fillna("-")
+            design_df['單價'] = design_df['編號'].map(map_cost).fillna(0)
+            
+            # 處理數量欄位 (相容舊資料)
+            if '使用數量' not in design_df.columns:
+                design_df['使用數量'] = design_df.get('數量', 1)
+            
+            design_df['小計'] = design_df['單價'] * design_df['使用數量']
+            
+            # 顯示表格
             st.dataframe(
                 design_df, 
                 use_container_width=True, 
@@ -356,11 +362,7 @@ elif page == "🧮 設計與成本計算":
             
             st.divider()
             
-            if '小計' in design_df.columns:
-                material_cost = design_df['小計'].sum()
-            else:
-                material_cost = 0
-                
+            material_cost = design_df['小計'].sum()
             c_labor, c_other = st.columns(2)
             with c_labor: labor_cost = st.number_input("工資 (元)", value=0)
             with c_other: other_cost = st.number_input("雜支 (元)", value=0)
@@ -376,9 +378,6 @@ elif page == "🧮 設計與成本計算":
             st.caption("📋 複製報價單：")
             export_text = f"【成本單】總計 ${total_cost:.1f}\n"
             for _, row in design_df.iterrows(): 
-                cat = row.get('分類', '')
-                spec = row.get('規格', '')
-                qty_used = row.get('使用數量', 0)
-                export_text += f"- [{cat}] {row['名稱']} ({spec}) x{qty_used}\n"
+                export_text += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
             st.text_area("", export_text, height=150)
         else: st.info("👈 請從左側選擇材料加入")
