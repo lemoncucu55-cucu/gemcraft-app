@@ -35,9 +35,9 @@ if page == "📦 庫存管理":
     st.header("庫存資料庫")
     st.info("💡 修改進貨價或數量後，系統會自動重新計算單顆成本。")
 
-    # 顯示並編輯表格
+    # 顯示並編輯表格 (已加上排序功能)
     edited_df = st.data_editor(
-        st.session_state['inventory'],
+        st.session_state['inventory'].sort_values(by='名稱'),
         num_rows="dynamic", 
         use_container_width=True,
         # 設定單顆成本欄位為唯讀，避免手誤修改
@@ -64,10 +64,11 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-# 下拉選單 (加上 .sort_values() 自動排序)
-option_name = st.selectbox("搜尋/選擇材料", df['名稱'].sort_values())
+        # 下拉選單 (已加上 .sort_values() 自動排序)
+        option_name = st.selectbox("搜尋/選擇材料", df['名稱'].sort_values())
         
         # 抓取選定材料的資訊
+        # 注意：這行就是原本報錯的地方，現在這裡的縮排是對齊的
         selected_item = df[df['名稱'] == option_name].iloc[0]
         unit_cost = selected_item['單顆成本']
         
