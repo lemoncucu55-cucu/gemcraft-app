@@ -33,7 +33,6 @@ def generate_new_id(category, df):
 def merge_inventory_duplicates(df):
     """
     掃描庫存表，將「分類+名稱+尺寸+形狀+五行」完全相同的項目合併。
-    執行加權平均成本計算，並保留最早的編號。
     """
     if df.empty: return df, 0
 
@@ -59,7 +58,6 @@ def merge_inventory_duplicates(df):
             base_row['庫存(顆)'] = total_qty
             base_row['單顆成本'] = avg_cost
             base_row['進貨日期'] = group['進貨日期'].max()
-            # 這裡不特別合併廠商，保留第一筆的廠商，或者你可以選擇更新為最新的
             
             new_rows.append(base_row)
             
@@ -72,7 +70,6 @@ def merge_inventory_duplicates(df):
 # 2. 設定與資料庫初始化
 # ==========================================
 
-# ★★★ 更新後的廠商清單 ★★★
 SUPPLIERS = [
     "小聰頭", "小聰頭-13", "小聰頭-千千", "小聰頭-子馨", "小聰頭-小宇", "小聰頭-尼克", "小聰頭-周三寶", "小聰頭-蒨",
     "永安", "石之靈", "多加市集", "決益X", "昇輝", "星辰Crystal", "珍珠包金", "格魯特", "御金坊",
@@ -280,8 +277,10 @@ elif page == "🧮 設計與成本計算":
                 option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
                 selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
                 
+                # ★★★ 新增：顯示分類 ★★★
                 info_content = f"""
                 **{selected_item['名稱']}**
+                - 分類: `{selected_item['分類']}`
                 - 編號: `{selected_item['編號']}`
                 - 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}
                 - 庫存: **{selected_item['庫存(顆)']}** 顆
@@ -297,9 +296,10 @@ elif page == "🧮 設計與成本計算":
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     st.session_state['current_design'].append({
                         '編號': selected_item['編號'],
+                        '分類': selected_item['分類'], # ★★★ 加入分類欄位
                         '名稱': selected_item['名稱'],
-                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
-                        '數量': qty,
+                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}", # ★★★ 規格欄位
+                        '使用數量': qty, # ★★★ 改名為使用數量
                         '單價': unit_cost,
                         '小計': unit_cost * qty
                     })
@@ -311,10 +311,15 @@ elif page == "🧮 設計與成本計算":
         st.subheader("2. 設計清單與成本")
         if st.session_state['current_design']:
             design_df = pd.DataFrame(st.session_state['current_design'])
+            
             st.dataframe(
                 design_df, use_container_width=True, hide_index=True,
-                column_order=("編號", "名稱", "規格", "數量", "單價", "小計"),
-                column_config={"單價": st.column_config.NumberColumn(format="$%.1f"), "小計": st.column_config.NumberColumn(format="$%.1f")}
+                # ★★★ 更新欄位順序與名稱 ★★★
+                column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
+                column_config={
+                    "單價": st.column_config.NumberColumn(format="$%.1f"), 
+                    "小計": st.column_config.NumberColumn(format="$%.1f")
+                }
             )
             st.divider()
             material_cost = design_df['小計'].sum()
@@ -330,6 +335,8 @@ elif page == "🧮 設計與成本計算":
                 st.rerun()
             st.caption("📋 複製報價單：")
             export_text = f"【成本單】總計 ${total_cost:.1f}\n"
-            for _, row in design_df.iterrows(): export_text += f"- {row['名稱']} ({row['規格']}) x{row['數量']}\n"
+            for _, row in design_df.iterrows(): 
+                # ★★★ 報價單文字也同步更新 ★★★
+                export_text += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
             st.text_area("", export_text, height=150)
         else: st.info("👈 請從左側選擇材料加入")
