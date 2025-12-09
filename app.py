@@ -64,8 +64,8 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # 下拉選單
-        option_name = st.selectbox("搜尋/選擇材料", df['名稱'])
+# 下拉選單 (加上 .sort_values() 自動排序)
+option_name = st.selectbox("搜尋/選擇材料", df['名稱'].sort_values())
         
         # 抓取選定材料的資訊
         selected_item = df[df['名稱'] == option_name].iloc[0]
