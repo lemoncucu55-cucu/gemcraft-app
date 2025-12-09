@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import io
+import os
 
 # ==========================================
 # 1. 核心邏輯區 (函式)
@@ -84,8 +85,28 @@ COLUMNS = [
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
+# ★★★ 修改重點：自動讀取 CSV ★★★
+# 請確保你的 CSV 檔名跟這裡設定的一模一樣
+DEFAULT_CSV_FILE = 'inventory_backup_2025-12-09.csv'
+
 if 'inventory' not in st.session_state:
-    st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+    # 嘗試讀取預設檔案
+    if os.path.exists(DEFAULT_CSV_FILE):
+        try:
+            df_init = pd.read_csv(DEFAULT_CSV_FILE)
+            # 確保編號是字串格式
+            df_init['編號'] = df_init['編號'].astype(str)
+            
+            # 簡單檢查欄位是否正確
+            if set(COLUMNS).issubset(df_init.columns):
+                st.session_state['inventory'] = df_init
+            else:
+                st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+        except Exception:
+            st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+    else:
+        # 如果找不到檔案，就初始化空白表格
+        st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
 if 'current_design' not in st.session_state:
     st.session_state['current_design'] = []
@@ -277,7 +298,6 @@ elif page == "🧮 設計與成本計算":
                 option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
                 selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
                 
-                # ★★★ 新增：顯示分類 ★★★
                 info_content = f"""
                 **{selected_item['名稱']}**
                 - 分類: `{selected_item['分類']}`
@@ -296,10 +316,10 @@ elif page == "🧮 設計與成本計算":
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     st.session_state['current_design'].append({
                         '編號': selected_item['編號'],
-                        '分類': selected_item['分類'], # ★★★ 加入分類欄位
+                        '分類': selected_item['分類'],
                         '名稱': selected_item['名稱'],
-                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}", # ★★★ 規格欄位
-                        '使用數量': qty, # ★★★ 改名為使用數量
+                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
+                        '使用數量': qty,
                         '單價': unit_cost,
                         '小計': unit_cost * qty
                     })
@@ -314,7 +334,6 @@ elif page == "🧮 設計與成本計算":
             
             st.dataframe(
                 design_df, use_container_width=True, hide_index=True,
-                # ★★★ 更新欄位順序與名稱 ★★★
                 column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
                 column_config={
                     "單價": st.column_config.NumberColumn(format="$%.1f"), 
@@ -336,7 +355,6 @@ elif page == "🧮 設計與成本計算":
             st.caption("📋 複製報價單：")
             export_text = f"【成本單】總計 ${total_cost:.1f}\n"
             for _, row in design_df.iterrows(): 
-                # ★★★ 報價單文字也同步更新 ★★★
                 export_text += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
             st.text_area("", export_text, height=150)
         else: st.info("👈 請從左側選擇材料加入")
