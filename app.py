@@ -33,7 +33,7 @@ def generate_new_id(category, df):
 
 def merge_inventory_duplicates(df):
     """
-    掃描庫存表，將「分類+名稱+尺寸+形狀+五行」完全相同的項目合併。
+    掃描庫存表，將相同項目合併。
     """
     if df.empty: return df, 0
 
@@ -85,16 +85,14 @@ COLUMNS = [
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
-# ★★★ 關鍵設定：自動讀取你原本的庫存檔 ★★★
+# 設定預設讀取的檔案
 DEFAULT_CSV_FILE = 'inventory_backup_2025-12-09.csv'
 
 if 'inventory' not in st.session_state:
-    # 嘗試讀取 GitHub 上的 CSV 檔案
     if os.path.exists(DEFAULT_CSV_FILE):
         try:
             df_init = pd.read_csv(DEFAULT_CSV_FILE)
             df_init['編號'] = df_init['編號'].astype(str)
-            
             if set(COLUMNS).issubset(df_init.columns):
                 st.session_state['inventory'] = df_init
             else:
@@ -294,7 +292,6 @@ elif page == "🧮 設計與成本計算":
                 option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
                 selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
                 
-                # ★★★ 升級資訊卡：顯示分類 ★★★
                 info_content = f"""
                 **{selected_item['名稱']}**
                 - 分類: `{selected_item['分類']}`
@@ -313,10 +310,10 @@ elif page == "🧮 設計與成本計算":
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     st.session_state['current_design'].append({
                         '編號': selected_item['編號'],
-                        '分類': selected_item['分類'], # ★★★ 加入分類
+                        '分類': selected_item['分類'], 
                         '名稱': selected_item['名稱'],
-                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}", # ★★★ 加入規格
-                        '使用數量': qty, # ★★★ 改名為使用數量
+                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
+                        '使用數量': qty, 
                         '單價': unit_cost,
                         '小計': unit_cost * qty
                     })
@@ -326,10 +323,16 @@ elif page == "🧮 設計與成本計算":
 
     with col2:
         st.subheader("2. 設計清單與成本")
+        
+        # 這裡會判斷 session 中是否有資料
         if st.session_state['current_design']:
             design_df = pd.DataFrame(st.session_state['current_design'])
             
-            # ★★★ 顯示新的欄位順序 ★★★
+            # ★★★ 關鍵點：確認欄位是否存在，若舊資料沒有新欄位，會自動填入空白以免報錯 ★★★
+            for col in ['分類', '規格', '使用數量']:
+                if col not in design_df.columns:
+                    design_df[col] = "-"
+            
             st.dataframe(
                 design_df, use_container_width=True, hide_index=True,
                 column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
@@ -339,7 +342,13 @@ elif page == "🧮 設計與成本計算":
                 }
             )
             st.divider()
-            material_cost = design_df['小計'].sum()
+            
+            # 計算總合
+            if '小計' in design_df.columns:
+                material_cost = design_df['小計'].sum()
+            else:
+                material_cost = 0
+                
             c_labor, c_other = st.columns(2)
             with c_labor: labor_cost = st.number_input("工資 (元)", value=0)
             with c_other: other_cost = st.number_input("雜支 (元)", value=0)
@@ -347,14 +356,17 @@ elif page == "🧮 設計與成本計算":
             st.markdown("### 💰 總成本合計")
             st.metric(label="Total Cost", value=f"NT$ {total_cost:.1f}")
             st.divider()
+            
             if st.button("🗑️ 清空重新計算"):
                 st.session_state['current_design'] = []
                 st.rerun()
+                
             st.caption("📋 複製報價單：")
             export_text = f"【成本單】總計 ${total_cost:.1f}\n"
             for _, row in design_df.iterrows(): 
-                # ★★★ 報價單也同步更新 ★★★
-                export_text += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
+                cat = row.get('分類', '')
+                spec = row.get('規格', '')
+                qty_used = row.get('使用數量', row.get('數量', 0))
+                export_text += f"- [{cat}] {row['名稱']} ({spec}) x{qty_used}\n"
             st.text_area("", export_text, height=150)
         else: st.info("👈 請從左側選擇材料加入")
-            
