@@ -54,7 +54,6 @@ if 'inventory' not in st.session_state:
         try:
             df_init = pd.read_csv(DEFAULT_CSV_FILE)
             df_init['編號'] = df_init['編號'].astype(str)
-            # 確保數字欄位正確
             df_init['單顆成本'] = pd.to_numeric(df_init['單顆成本'], errors='coerce').fillna(0)
             st.session_state['inventory'] = df_init
         except:
@@ -157,26 +156,34 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # 建立選單
+        # ★★★ 新增：分類篩選器 ★★★
+        # 先準備好所有分類選項
+        cat_options = ["全部"] + ["天然石", "配件", "耗材"]
+        selected_cat = st.radio("🔍 依分類篩選", cat_options, horizontal=True)
+
+        # 根據選擇過濾資料
         valid_df = df[df['編號'].notna()].copy()
+        
+        if selected_cat != "全部":
+            valid_df = valid_df[valid_df['分類'] == selected_cat]
+
         if not valid_df.empty:
             valid_df['顯示名稱'] = valid_df['編號'].astype(str) + " | " + valid_df['名稱'].astype(str) + " (" + valid_df['尺寸mm'].astype(str) + "mm)"
+            
+            # 這裡的選單現在只會顯示篩選後的結果
             option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'].sort_values())
             
-            # 抓取資料
             item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
             
-            # 顯示資訊
             st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
             qty = st.number_input("使用數量", 1)
             
             if st.button("⬇️ 加入設計圖", type="primary"):
-                # ★★★ 暴力解法：直接把所有欄位文字寫死存進去 ★★★
                 new_entry = {
-                    '分類': str(item['分類']),         # 強制存成字串
-                    '名稱': str(item['名稱']),         # 強制存成字串
-                    '規格': f"{item['尺寸mm']}mm {item['形狀']}", # 強制組合成字串
+                    '分類': str(item['分類']),
+                    '名稱': str(item['名稱']),
+                    '規格': f"{item['尺寸mm']}mm {item['形狀']}",
                     '使用數量': int(qty),
                     '單價': float(item['單顆成本']),
                     '小計': float(item['單顆成本']) * int(qty)
@@ -185,7 +192,10 @@ elif page == "🧮 設計與成本計算":
                 st.success("已加入！")
                 st.rerun()
         else:
-            st.warning("庫存無資料")
+            if selected_cat == "全部":
+                st.warning("庫存無資料，請先新增")
+            else:
+                st.warning(f"沒有「{selected_cat}」類別的材料")
 
     with col2:
         st.subheader("2. 設計清單")
@@ -195,7 +205,6 @@ elif page == "🧮 設計與成本計算":
         if len(design_data) > 0:
             design_df = pd.DataFrame(design_data)
             
-            # ★★★ 強制指定欄位顯示順序 (絕對不會錯) ★★★
             st.dataframe(
                 design_df,
                 use_container_width=True,
@@ -221,7 +230,6 @@ elif page == "🧮 設計與成本計算":
                 st.session_state['current_design'] = []
                 st.rerun()
                 
-            # 報價單文字生成
             txt = f"【報價單】總計 ${final_total:.0f}\n"
             for _, row in design_df.iterrows():
                 txt += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
