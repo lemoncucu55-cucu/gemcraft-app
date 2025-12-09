@@ -19,10 +19,18 @@ def generate_new_id(category, df):
     if category not in prefix_map:
         return "N/A"
         
+    # 如果資料庫是空的，直接回傳第一號
+    if df.empty:
+        return f"{prefix}0001"
+        
     prefix = prefix_map[category]
     
     # 找出目前該分類最大號碼
-    existing_ids = df[df['編號'].astype(str).str.startswith(prefix, na=False)]['編號']
+    # 轉成字串避免型別錯誤
+    df_str = df.copy()
+    df_str['編號'] = df_str['編號'].astype(str)
+    
+    existing_ids = df_str[df_str['編號'].str.startswith(prefix, na=False)]['編號']
     
     max_num = 0
     for eid in existing_ids:
@@ -50,24 +58,12 @@ SUPPLIERS = [
 ]
 
 if 'inventory' not in st.session_state:
-    # 初始化資料庫 (欄位擴充)
-    data = {
-        '編號': ['ST0001'],
-        '分類': ['天然石'],
-        '名稱': ['紫水晶'],
-        '尺寸mm': [8.0],
-        '形狀': ['圓珠'],
-        '五行': ['火'],
-        '進貨總價': [500],
-        '進貨數量(顆)': [40],
-        '進貨日期': [date.today()],
-        '進貨廠商': ['小聰頭'],
-        '庫存(顆)': [40],
-    }
-    df = pd.DataFrame(data)
-    # 防呆計算單顆成本
-    p_qty = df['進貨數量(顆)'].replace(0, 1)
-    df['單顆成本'] = df['進貨總價'] / p_qty
+    # 初始化資料庫 (全空版本)
+    # 預先定義好欄位名稱，確保表格能正常顯示
+    df = pd.DataFrame(columns=[
+        '編號', '分類', '名稱', '尺寸mm', '形狀', '五行', 
+        '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
+    ])
     st.session_state['inventory'] = df
 
 if 'current_design' not in st.session_state:
@@ -142,7 +138,7 @@ if page == "📦 庫存管理與進貨":
                     '進貨數量(顆)': new_qty,
                     '進貨日期': new_date,
                     '進貨廠商': new_supplier,
-                    '庫存(顆)': new_qty,
+                    '庫存(顆)': new_qty, # 新進貨時，庫存預設等於進貨量
                     '單顆成本': new_price / new_qty if new_qty > 0 else 0
                 }
                 
@@ -157,29 +153,27 @@ if page == "📦 庫存管理與進貨":
     # --- Part 2: 庫存總表 (Data Editor) ---
     st.markdown("### 📊 目前庫存清單")
     
-    if not st.session_state['inventory'].empty:
-        current_df = st.session_state['inventory']
+    current_df = st.session_state['inventory']
+    
+    # 即使是空的也要顯示表頭
+    edited_df = st.data_editor(
+        current_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商", "進貨日期"),
+        disabled=["編號", "單顆成本"],
+        key="inventory_table"
+    )
+    
+    if not edited_df.equals(current_df):
+        # 重新計算成本 (防止有人改了進貨價)
+        p_price = pd.to_numeric(edited_df['進貨總價'], errors='coerce').fillna(0)
+        p_qty = pd.to_numeric(edited_df['進貨數量(顆)'], errors='coerce').fillna(0)
+        edited_df['單顆成本'] = p_price / p_qty.replace(0, 1)
         
-        edited_df = st.data_editor(
-            current_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商", "進貨日期"),
-            disabled=["編號", "單顆成本"],
-            key="inventory_table"
-        )
-        
-        if not edited_df.equals(current_df):
-            # 重新計算成本
-            p_price = pd.to_numeric(edited_df['進貨總價'], errors='coerce').fillna(0)
-            p_qty = pd.to_numeric(edited_df['進貨數量(顆)'], errors='coerce').fillna(0)
-            edited_df['單顆成本'] = p_price / p_qty.replace(0, 1)
-            
-            st.session_state['inventory'] = edited_df
-            st.rerun()
-    else:
-        st.info("目前沒有資料，請使用上方表單新增。")
+        st.session_state['inventory'] = edited_df
+        st.rerun()
 
 
 # ------------------------------------------
@@ -195,49 +189,52 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # 建立搜尋顯示名稱
-        valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
-        
-        # 處理顯示格式
-        valid_df['顯示名稱'] = (
-            valid_df['編號'].astype(str) + " | " + 
-            valid_df['名稱'].astype(str) + 
-            " (" + valid_df['尺寸mm'].astype(str) + "mm)"
-        )
-        
-        if not valid_df.empty:
-            option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
+        if not df.empty and '編號' in df.columns:
+            # 建立搜尋顯示名稱
+            valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
             
-            # 找出對應項目
-            selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
-            
-            # ★★★ 修正點：使用三引號字串，避免複製時出現語法錯誤 ★★★
-            info_content = f"""
-            **{selected_item['名稱']}**
-            
-            - 編號: `{selected_item['編號']}`
-            - 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}
-            - 五行: {selected_item['五行']}
-            - 庫存: **{selected_item['庫存(顆)']}** 顆
-            - 廠商: {selected_item['進貨廠商']}
-            """
-            st.info(info_content)
-            
-            unit_cost = selected_item['單顆成本']
-            st.metric("單顆成本", f"${unit_cost:.2f}")
-            
-            qty = st.number_input("使用數量", min_value=1, value=1)
-            
-            if st.button("⬇️ 加入設計圖", type="primary"):
-                st.session_state['current_design'].append({
-                    '編號': selected_item['編號'],
-                    '名稱': selected_item['名稱'],
-                    '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
-                    '數量': qty,
-                    '單價': unit_cost,
-                    '小計': unit_cost * qty
-                })
-                st.rerun()
+            if not valid_df.empty:
+                # 處理顯示格式
+                valid_df['顯示名稱'] = (
+                    valid_df['編號'].astype(str) + " | " + 
+                    valid_df['名稱'].astype(str) + 
+                    " (" + valid_df['尺寸mm'].astype(str) + "mm)"
+                )
+                
+                option_display = st.selectbox("搜尋/選擇材料", valid_df['顯示名稱'].sort_values())
+                
+                # 找出對應項目
+                selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
+                
+                # 顯示詳細資訊卡片 (使用三引號避免語法錯誤)
+                info_content = f"""
+                **{selected_item['名稱']}**
+                
+                - 編號: `{selected_item['編號']}`
+                - 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}
+                - 五行: {selected_item['五行']}
+                - 庫存: **{selected_item['庫存(顆)']}** 顆
+                - 廠商: {selected_item['進貨廠商']}
+                """
+                st.info(info_content)
+                
+                unit_cost = selected_item['單顆成本']
+                st.metric("單顆成本", f"${unit_cost:.2f}")
+                
+                qty = st.number_input("使用數量", min_value=1, value=1)
+                
+                if st.button("⬇️ 加入設計圖", type="primary"):
+                    st.session_state['current_design'].append({
+                        '編號': selected_item['編號'],
+                        '名稱': selected_item['名稱'],
+                        '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
+                        '數量': qty,
+                        '單價': unit_cost,
+                        '小計': unit_cost * qty
+                    })
+                    st.rerun()
+            else:
+                 st.warning("庫存是空的，請先去「庫存管理」新增資料。")
         else:
             st.warning("庫存是空的，請先去「庫存管理」新增資料。")
 
