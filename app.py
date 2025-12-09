@@ -4,7 +4,7 @@ from datetime import date
 import io
 
 # ==========================================
-# 1. 核心邏輯區
+# 1. 核心邏輯區 (函式)
 # ==========================================
 
 def generate_new_id(category, df):
@@ -30,8 +30,65 @@ def generate_new_id(category, df):
     
     return f"{prefix}{str(max_num + 1).zfill(4)}"
 
+def merge_inventory_duplicates(df):
+    """
+    掃描庫存表，將「分類+名稱+尺寸+形狀+五行」完全相同的項目合併。
+    執行加權平均成本計算，並保留最早的編號。
+    """
+    if df.empty: return df, 0
+
+    # 定義判定為「同一種商品」的關鍵欄位
+    # 注意：不包含「廠商」，因為不同廠商進同種貨，也要合併算平均成本
+    group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
+    
+    # 確保數值欄位格式正確，避免合併失敗
+    df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
+    df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
+    
+    # 找出重複的群組
+    # duplicated() 會標記重複出現的項目
+    # 我們先分組計算
+    
+    original_count = len(df)
+    new_rows = []
+    
+    # 使用 groupby 將相同商品聚在一起
+    # sort=False 保持原始順序大致不變
+    grouped = df.groupby(group_cols, sort=False, as_index=False)
+    
+    for _, group in grouped:
+        if len(group) == 1:
+            new_rows.append(group.iloc[0])
+        else:
+            # 發現重複！開始執行加權平均
+            # 1. 總庫存
+            total_qty = group['庫存(顆)'].sum()
+            
+            # 2. 總價值 (舊庫存*舊成本 + 新庫存*新成本 ...)
+            total_value = (group['庫存(顆)'] * group['單顆成本']).sum()
+            
+            # 3. 新平均成本
+            avg_cost = total_value / total_qty if total_qty > 0 else 0
+            
+            # 4. 保留第一筆資料作為代表 (通常是編號最小/最早的那筆)
+            # 使用 sort_values 確保留下編號最小的 (例如 ST0003)
+            base_row = group.sort_values('編號').iloc[0].copy()
+            
+            base_row['庫存(顆)'] = total_qty
+            base_row['單顆成本'] = avg_cost
+            # 進貨日期更新為最近的一次
+            base_row['進貨日期'] = group['進貨日期'].max()
+            # 廠商更新為最近一次的廠商 (或保留原本的)
+            
+            new_rows.append(base_row)
+            
+    new_df = pd.DataFrame(new_rows)
+    merged_count = original_count - len(new_df)
+    
+    return new_df, merged_count
+
 # ==========================================
-# 2. 設定與初始化
+# 2. 設定與資料庫初始化
 # ==========================================
 
 SUPPLIERS = [
@@ -102,7 +159,7 @@ with st.sidebar:
 # ------------------------------------------
 if page == "📦 庫存管理與進貨":
     
-    # 切換模式：新品 vs 補貨
+    # 模式選擇
     mode = st.radio("請選擇操作模式：", ["✨ 新增新品 (建立新編號)", "🔄 舊品補貨 (合併庫存/平均成本)"], horizontal=True)
     
     if mode == "✨ 新增新品 (建立新編號)":
@@ -145,13 +202,11 @@ if page == "📦 庫存管理與進貨":
         
         df = st.session_state['inventory']
         if df.empty:
-            st.warning("目前沒有任何庫存資料，請先新增新品。")
+            st.warning("目前沒有任何庫存資料。")
         else:
-            # 建立選單
             valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
             valid_df['顯示名稱'] = valid_df['編號'].astype(str) + " | " + valid_df['名稱'] + " (" + valid_df['尺寸mm'].astype(str) + "mm)"
             
-            # 使用 form 避免一直重整
             with st.form("restock_form", clear_on_submit=True):
                 target_item_str = st.selectbox("搜尋要補貨的商品", valid_df['顯示名稱'].sort_values())
                 
@@ -163,31 +218,21 @@ if page == "📦 庫存管理與進貨":
                 restock_supplier = st.selectbox("本次進貨廠商", SUPPLIERS)
                 
                 if st.form_submit_button("🔄 確認補貨並更新成本", type="primary"):
-                    # 1. 找出原本的那一行資料
                     target_id = target_item_str.split(" | ")[0]
-                    # 使用 index 來定位修改
                     idx = df.index[df['編號'] == target_id].tolist()[0]
                     
-                    # 2. 取得舊數據
                     old_stock = df.at[idx, '庫存(顆)']
                     old_cost = df.at[idx, '單顆成本']
                     
-                    # 3. 計算加權平均
-                    # 舊庫存總值 = 舊數量 * 舊成本
                     old_total_value = old_stock * old_cost
-                    # 新庫存總值 = 舊總值 + 本次花費
                     new_total_value = old_total_value + restock_price
-                    # 新總數量
                     new_total_qty = old_stock + restock_qty
-                    
-                    # 新單顆成本
                     new_avg_cost = new_total_value / new_total_qty if new_total_qty > 0 else 0
                     
-                    # 4. 更新資料庫
                     df.at[idx, '庫存(顆)'] = new_total_qty
                     df.at[idx, '單顆成本'] = new_avg_cost
-                    df.at[idx, '進貨日期'] = restock_date # 更新為最新日期
-                    df.at[idx, '進貨廠商'] = restock_supplier # 更新為最新廠商
+                    df.at[idx, '進貨日期'] = restock_date
+                    df.at[idx, '進貨廠商'] = restock_supplier
                     
                     st.session_state['inventory'] = df
                     st.success(f"補貨成功！{target_id} 庫存變更為 {new_total_qty} 顆，新平均成本 ${new_avg_cost:.1f}")
@@ -198,6 +243,20 @@ if page == "📦 庫存管理與進貨":
     # --- Part 2: 庫存總表 ---
     st.markdown("### 📊 目前庫存清單")
     
+    # ★★★ 新增功能：一鍵合併重複商品 ★★★
+    col_header, col_merge_btn = st.columns([4, 1])
+    with col_header:
+        st.caption("提示：直接修改表格僅會更新數值，不會執行平均成本計算。若要進貨請使用上方表單。")
+    with col_merge_btn:
+        if st.button("🧹 自動合併重複商品"):
+            merged_df, count = merge_inventory_duplicates(st.session_state['inventory'])
+            if count > 0:
+                st.session_state['inventory'] = merged_df
+                st.success(f"成功合併 {count} 筆重複資料！")
+                st.rerun()
+            else:
+                st.info("檢查完畢，沒有發現重複的商品。")
+
     current_df = st.session_state['inventory']
     
     edited_df = st.data_editor(
