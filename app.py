@@ -131,9 +131,13 @@ if page == "📦 庫存管理與進貨":
                     st.rerun()
 
     current_df = st.session_state['inventory']
+    # 這裡顯示時，依照五行排序，方便管理查看
+    if not current_df.empty:
+         current_df = current_df.sort_values(by=['分類', '五行', '名稱'])
+
     edited_df = st.data_editor(
         current_df, use_container_width=True, hide_index=True, num_rows="dynamic",
-        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "庫存(顆)", "單顆成本", "進貨廠商"),
+        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商"),
         disabled=["編號", "單顆成本"],
         column_config={
             "單顆成本": st.column_config.NumberColumn(format="$%.1f"),
@@ -156,30 +160,44 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # ★★★ 新增：分類篩選器 ★★★
-        # 先準備好所有分類選項
+        # 分類篩選器
         cat_options = ["全部"] + ["天然石", "配件", "耗材"]
         selected_cat = st.radio("🔍 依分類篩選", cat_options, horizontal=True)
 
-        # 根據選擇過濾資料
         valid_df = df[df['編號'].notna()].copy()
         
         if selected_cat != "全部":
             valid_df = valid_df[valid_df['分類'] == selected_cat]
 
         if not valid_df.empty:
-            valid_df['顯示名稱'] = valid_df['編號'].astype(str) + " | " + valid_df['名稱'].astype(str) + " (" + valid_df['尺寸mm'].astype(str) + "mm)"
+            # ★★★ 核心修改：排序邏輯 (五行 -> 名稱) ★★★
+            # 填補空值以免排序報錯
+            valid_df['五行'] = valid_df['五行'].fillna('未分類')
+            valid_df['名稱'] = valid_df['名稱'].fillna('')
             
-            # 這裡的選單現在只會顯示篩選後的結果
-            option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'].sort_values())
+            # 執行排序
+            valid_df = valid_df.sort_values(by=['五行', '名稱'])
             
+            # 建立顯示名稱：[五行] 名稱 (規格) | 編號
+            valid_df['顯示名稱'] = (
+                "[" + valid_df['五行'].astype(str) + "] " +
+                valid_df['名稱'].astype(str) + 
+                " (" + valid_df['尺寸mm'].astype(str) + "mm " + valid_df['形狀'].astype(str) + ")" +
+                " | " + valid_df['編號'].astype(str)
+            )
+            
+            # 這裡直接使用已經排好序的 '顯示名稱'，不要再 sort_values()
+            option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'])
+            
+            # 抓取資料
             item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
             
-            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
+            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
             qty = st.number_input("使用數量", 1)
             
             if st.button("⬇️ 加入設計圖", type="primary"):
+                # 直接寫死文字
                 new_entry = {
                     '分類': str(item['分類']),
                     '名稱': str(item['名稱']),
