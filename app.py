@@ -39,7 +39,7 @@ def generate_new_id(category, df):
 # 2. 設定與資料庫初始化
 # ==========================================
 
-# 定義廠商清單 (依據你的要求)
+# 定義廠商清單
 SUPPLIERS = [
     "小聰頭", "小聰頭-13", "小聰頭-千千", "小聰頭-子馨", "小聰頭-小宇", "小聰頭-尼克", "小聰頭-周三寶", "小聰頭-蒨",
     "永安", "石之靈", "多加市集", "決益X", "昇輝", "星辰Crystal", "珍珠包金", "格魯特", "御金坊",
@@ -51,7 +51,6 @@ SUPPLIERS = [
 
 if 'inventory' not in st.session_state:
     # 初始化資料庫 (欄位擴充)
-    # 預設一筆範例資料
     data = {
         '編號': ['ST0001'],
         '分類': ['天然石'],
@@ -63,10 +62,12 @@ if 'inventory' not in st.session_state:
         '進貨數量(顆)': [40],
         '進貨日期': [date.today()],
         '進貨廠商': ['小聰頭'],
-        '庫存(顆)': [40], # 預設庫存等於進貨數量
+        '庫存(顆)': [40],
     }
     df = pd.DataFrame(data)
-    df['單顆成本'] = df['進貨總價'] / df['進貨數量(顆)'].replace(0, 1)
+    # 防呆計算單顆成本
+    p_qty = df['進貨數量(顆)'].replace(0, 1)
+    df['單顆成本'] = df['進貨總價'] / p_qty
     st.session_state['inventory'] = df
 
 if 'current_design' not in st.session_state:
@@ -141,7 +142,7 @@ if page == "📦 庫存管理與進貨":
                     '進貨數量(顆)': new_qty,
                     '進貨日期': new_date,
                     '進貨廠商': new_supplier,
-                    '庫存(顆)': new_qty, # 新進貨時，庫存預設等於進貨量
+                    '庫存(顆)': new_qty,
                     '單顆成本': new_price / new_qty if new_qty > 0 else 0
                 }
                 
@@ -156,24 +157,21 @@ if page == "📦 庫存管理與進貨":
     # --- Part 2: 庫存總表 (Data Editor) ---
     st.markdown("### 📊 目前庫存清單")
     
-    # 確保資料庫有內容
     if not st.session_state['inventory'].empty:
-        # 顯示編輯器 (只允許修改庫存、價格等非關鍵欄位，避免編號錯亂)
         current_df = st.session_state['inventory']
         
         edited_df = st.data_editor(
             current_df,
-            num_rows="dynamic", # 這裡還是允許下方直接新增，以備不時之需
+            num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "五行", "庫存(顆)", "單顆成本", "進貨廠商", "進貨日期"),
-            disabled=["編號", "單顆成本"], # 鎖定編號和成本
+            disabled=["編號", "單顆成本"],
             key="inventory_table"
         )
         
-        # 處理表格內的修改 (例如手動改庫存)
         if not edited_df.equals(current_df):
-            # 重新計算成本 (防止有人改了進貨價)
+            # 重新計算成本
             p_price = pd.to_numeric(edited_df['進貨總價'], errors='coerce').fillna(0)
             p_qty = pd.to_numeric(edited_df['進貨數量(顆)'], errors='coerce').fillna(0)
             edited_df['單顆成本'] = p_price / p_qty.replace(0, 1)
@@ -197,10 +195,10 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
-        # 建立搜尋顯示名稱：編號 | 名稱 (尺寸mm-形狀)
+        # 建立搜尋顯示名稱
         valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
         
-        # 處理顯示格式，避免 None 出錯
+        # 處理顯示格式
         valid_df['顯示名稱'] = (
             valid_df['編號'].astype(str) + " | " + 
             valid_df['名稱'].astype(str) + 
@@ -213,9 +211,80 @@ elif page == "🧮 設計與成本計算":
             # 找出對應項目
             selected_item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
             
-            # 顯示詳細資訊卡片
-            st.info(
-                f"**{selected_item['名稱']}**\n\n"
-                f"- 編號: `{selected_item['編號']}`\n"
-                f"- 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}\n"
-                f"- 五行: {selected_item['五行']}\n
+            # ★★★ 修正點：使用三引號字串，避免複製時出現語法錯誤 ★★★
+            info_content = f"""
+            **{selected_item['名稱']}**
+            
+            - 編號: `{selected_item['編號']}`
+            - 規格: {selected_item['尺寸mm']}mm / {selected_item['形狀']}
+            - 五行: {selected_item['五行']}
+            - 庫存: **{selected_item['庫存(顆)']}** 顆
+            - 廠商: {selected_item['進貨廠商']}
+            """
+            st.info(info_content)
+            
+            unit_cost = selected_item['單顆成本']
+            st.metric("單顆成本", f"${unit_cost:.2f}")
+            
+            qty = st.number_input("使用數量", min_value=1, value=1)
+            
+            if st.button("⬇️ 加入設計圖", type="primary"):
+                st.session_state['current_design'].append({
+                    '編號': selected_item['編號'],
+                    '名稱': selected_item['名稱'],
+                    '規格': f"{selected_item['尺寸mm']}mm {selected_item['形狀']}",
+                    '數量': qty,
+                    '單價': unit_cost,
+                    '小計': unit_cost * qty
+                })
+                st.rerun()
+        else:
+            st.warning("庫存是空的，請先去「庫存管理」新增資料。")
+
+    # --- 右邊：計算結果區 ---
+    with col2:
+        st.subheader("2. 設計清單與成本")
+        
+        if st.session_state['current_design']:
+            design_df = pd.DataFrame(st.session_state['current_design'])
+            
+            st.dataframe(
+                design_df, 
+                use_container_width=True,
+                hide_index=True,
+                column_order=("編號", "名稱", "規格", "數量", "單價", "小計"),
+                column_config={
+                    "單價": st.column_config.NumberColumn(format="$%.2f"),
+                    "小計": st.column_config.NumberColumn(format="$%.2f"),
+                }
+            )
+
+            st.divider()
+
+            material_cost = design_df['小計'].sum()
+            
+            c_labor, c_other = st.columns(2)
+            with c_labor:
+                labor_cost = st.number_input("工資 (元)", value=0)
+            with c_other:
+                other_cost = st.number_input("雜支 (元)", value=0)
+
+            total_cost = material_cost + labor_cost + other_cost
+
+            st.markdown("### 💰 總成本合計")
+            st.metric(label="Total Cost", value=f"NT$ {total_cost:.1f}")
+
+            st.divider()
+            
+            if st.button("🗑️ 清空重新計算"):
+                st.session_state['current_design'] = []
+                st.rerun()
+                
+            st.caption("📋 複製報價單：")
+            export_text = f"【成本單】總計 ${total_cost:.1f}\n"
+            for _, row in design_df.iterrows():
+                export_text += f"- {row['名稱']} ({row['規格']}) x{row['數量']}\n"
+            st.text_area("", export_text, height=150)
+
+        else:
+            st.info("👈 請從左側選擇材料加入")
