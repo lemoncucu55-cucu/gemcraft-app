@@ -16,25 +16,33 @@ def generate_new_id(category, df):
         '耗材': 'OT',
     }
     
+    # 1. 先確認分類是否存在，並取得代號 (例如 ST)
     if category not in prefix_map:
         return "N/A"
+    
+    prefix = prefix_map[category]
         
-    # 如果資料庫是空的，直接回傳第一號
+    # 2. 如果資料庫是空的，直接回傳第一號 (修復 UnboundLocalError)
     if df.empty:
         return f"{prefix}0001"
-        
-    prefix = prefix_map[category]
     
-    # 找出目前該分類最大號碼
-    # 轉成字串避免型別錯誤
+    # 3. 找出目前該分類最大號碼
+    # 先將編號轉成字串，避免讀取錯誤
     df_str = df.copy()
     df_str['編號'] = df_str['編號'].astype(str)
     
+    # 篩選出同分類的編號
     existing_ids = df_str[df_str['編號'].str.startswith(prefix, na=False)]['編號']
     
+    # 如果該分類還沒有資料，也回傳第一號
+    if existing_ids.empty:
+        return f"{prefix}0001"
+    
+    # 找最大號
     max_num = 0
     for eid in existing_ids:
         try:
+            # 取出後面的數字部分 (ST0001 -> 1)
             num = int(eid[2:]) 
             if num > max_num:
                 max_num = num
@@ -59,7 +67,7 @@ SUPPLIERS = [
 
 if 'inventory' not in st.session_state:
     # 初始化資料庫 (全空版本)
-    # 預先定義好欄位名稱，確保表格能正常顯示
+    # 這裡只定義欄位名稱，內容是空的
     df = pd.DataFrame(columns=[
         '編號', '分類', '名稱', '尺寸mm', '形狀', '五行', 
         '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
@@ -123,10 +131,13 @@ if page == "📦 庫存管理與進貨":
             if not new_name:
                 st.error("❌ 請填寫「名稱」！")
             else:
-                # 1. 產生新編號
+                # 1. 產生新編號 (修正後的邏輯)
                 new_id = generate_new_id(new_cat, st.session_state['inventory'])
                 
                 # 2. 建立新資料 Row
+                # 防止除以零錯誤
+                unit_cost = new_price / new_qty if new_qty > 0 else 0
+                
                 new_data = {
                     '編號': new_id,
                     '分類': new_cat,
@@ -139,12 +150,17 @@ if page == "📦 庫存管理與進貨":
                     '進貨日期': new_date,
                     '進貨廠商': new_supplier,
                     '庫存(顆)': new_qty, # 新進貨時，庫存預設等於進貨量
-                    '單顆成本': new_price / new_qty if new_qty > 0 else 0
+                    '單顆成本': unit_cost
                 }
                 
                 # 3. 加入 DataFrame
                 new_df = pd.DataFrame([new_data])
-                st.session_state['inventory'] = pd.concat([st.session_state['inventory'], new_df], ignore_index=True)
+                # 這裡做個保護，確保欄位順序一致
+                if st.session_state['inventory'].empty:
+                     st.session_state['inventory'] = new_df
+                else:
+                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], new_df], ignore_index=True)
+                
                 st.success(f"✅ 已新增：{new_id} {new_name}")
                 st.rerun()
 
@@ -189,8 +205,10 @@ elif page == "🧮 設計與成本計算":
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
         
+        # 確保資料庫不為空且有正確欄位
         if not df.empty and '編號' in df.columns:
             # 建立搜尋顯示名稱
+            # 過濾掉尚未編號的空行
             valid_df = df[df['編號'].notna() & (df['編號'] != '')].copy()
             
             if not valid_df.empty:
@@ -234,7 +252,7 @@ elif page == "🧮 設計與成本計算":
                     })
                     st.rerun()
             else:
-                 st.warning("庫存是空的，請先去「庫存管理」新增資料。")
+                 st.warning("目前沒有可用的庫存資料，請先新增。")
         else:
             st.warning("庫存是空的，請先去「庫存管理」新增資料。")
 
