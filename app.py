@@ -37,48 +37,29 @@ def merge_inventory_duplicates(df):
     """
     if df.empty: return df, 0
 
-    # 定義判定為「同一種商品」的關鍵欄位
-    # 注意：不包含「廠商」，因為不同廠商進同種貨，也要合併算平均成本
     group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
     
-    # 確保數值欄位格式正確，避免合併失敗
     df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
     df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
-    
-    # 找出重複的群組
-    # duplicated() 會標記重複出現的項目
-    # 我們先分組計算
     
     original_count = len(df)
     new_rows = []
     
-    # 使用 groupby 將相同商品聚在一起
-    # sort=False 保持原始順序大致不變
     grouped = df.groupby(group_cols, sort=False, as_index=False)
     
     for _, group in grouped:
         if len(group) == 1:
             new_rows.append(group.iloc[0])
         else:
-            # 發現重複！開始執行加權平均
-            # 1. 總庫存
             total_qty = group['庫存(顆)'].sum()
-            
-            # 2. 總價值 (舊庫存*舊成本 + 新庫存*新成本 ...)
             total_value = (group['庫存(顆)'] * group['單顆成本']).sum()
-            
-            # 3. 新平均成本
             avg_cost = total_value / total_qty if total_qty > 0 else 0
             
-            # 4. 保留第一筆資料作為代表 (通常是編號最小/最早的那筆)
-            # 使用 sort_values 確保留下編號最小的 (例如 ST0003)
             base_row = group.sort_values('編號').iloc[0].copy()
-            
             base_row['庫存(顆)'] = total_qty
             base_row['單顆成本'] = avg_cost
-            # 進貨日期更新為最近的一次
             base_row['進貨日期'] = group['進貨日期'].max()
-            # 廠商更新為最近一次的廠商 (或保留原本的)
+            # 這裡不特別合併廠商，保留第一筆的廠商，或者你可以選擇更新為最新的
             
             new_rows.append(base_row)
             
@@ -91,12 +72,13 @@ def merge_inventory_duplicates(df):
 # 2. 設定與資料庫初始化
 # ==========================================
 
+# ★★★ 更新後的廠商清單 ★★★
 SUPPLIERS = [
     "小聰頭", "小聰頭-13", "小聰頭-千千", "小聰頭-子馨", "小聰頭-小宇", "小聰頭-尼克", "小聰頭-周三寶", "小聰頭-蒨",
     "永安", "石之靈", "多加市集", "決益X", "昇輝", "星辰Crystal", "珍珠包金", "格魯特", "御金坊",
-    "淘-天使街", "淘-東吳天然石坊", "淘-物物居", "淘-軒閣珠寶", "淘-鈦鋼潮牌", "淘-義烏卡樂芙", 
-    "淘-鼎喜", "淘-銀拍檔", "淘-廣州小銀子", "淘-慶和銀飾", "淘-賽維雅珠寶", "淘-ins網紅玻璃杯",
-    "淘-Mary", "淘-Super Search",
+    "TB-天使街", "TB-東吳天然石坊", "TB-物物居", "TB-軒閣珠寶", "TB-鈦鋼潮牌", "TB-義烏卡樂芙", 
+    "TB-鼎喜", "TB-銀拍檔", "TB-廣州小銀子", "TB-慶和銀飾", "TB-賽維雅珠寶", "TB-ins網紅玻璃杯",
+    "TB-Mary", "TB-Super Search",
     "祥玥", "雪霖", "晶格格", "愛你一生", "福祿壽銀飾", "億伙", "廠商", "寶城水晶", "Rich"
 ]
 
@@ -159,7 +141,6 @@ with st.sidebar:
 # ------------------------------------------
 if page == "📦 庫存管理與進貨":
     
-    # 模式選擇
     mode = st.radio("請選擇操作模式：", ["✨ 新增新品 (建立新編號)", "🔄 舊品補貨 (合併庫存/平均成本)"], horizontal=True)
     
     if mode == "✨ 新增新品 (建立新編號)":
@@ -243,7 +224,6 @@ if page == "📦 庫存管理與進貨":
     # --- Part 2: 庫存總表 ---
     st.markdown("### 📊 目前庫存清單")
     
-    # ★★★ 新增功能：一鍵合併重複商品 ★★★
     col_header, col_merge_btn = st.columns([4, 1])
     with col_header:
         st.caption("提示：直接修改表格僅會更新數值，不會執行平均成本計算。若要進貨請使用上方表單。")
