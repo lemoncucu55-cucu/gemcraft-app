@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 import os
 
 # ==========================================
@@ -31,7 +31,7 @@ def generate_new_id(category, df):
 
 def merge_inventory_duplicates(df):
     """
-    掃描庫存表，將相同項目合併。
+    掃描庫存表，將相同項目合併 (用於庫存總表)。
     """
     if df.empty: return df, 0
 
@@ -83,8 +83,15 @@ COLUMNS = [
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
+# 進貨歷史的欄位
+HISTORY_COLUMNS = [
+    '紀錄時間', '動作', '編號', '分類', '名稱', '尺寸mm', '形狀', 
+    '廠商', '進貨數量', '進貨總價', '單價'
+]
+
 DEFAULT_CSV_FILE = 'inventory_backup_2025-12-09.csv'
 
+# 初始化庫存
 if 'inventory' not in st.session_state:
     if os.path.exists(DEFAULT_CSV_FILE):
         try:
@@ -96,6 +103,10 @@ if 'inventory' not in st.session_state:
             st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else:
         st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+
+# ★★★ 初始化進貨歷史 ★★★
+if 'history' not in st.session_state:
+    st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
 
 if 'current_design' not in st.session_state:
     st.session_state['current_design'] = []
@@ -109,42 +120,42 @@ st.title("💎 GemCraft 庫存管理系統")
 
 with st.sidebar:
     st.header("功能導航")
-    page = st.radio("前往", ["📦 庫存管理與進貨", "🧮 設計與成本計算"])
+    page = st.radio("前往", ["📦 庫存管理與進貨", "📜 進貨紀錄查詢", "🧮 設計與成本計算"])
     st.divider()
     st.header("💾 資料備份")
     
-    # 下載仍維持 CSV (相容性最好)
+    # 下載庫存總表
     df_to_download = st.session_state['inventory']
     if not df_to_download.empty:
         csv = df_to_download.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 下載庫存表 (CSV)", csv, f'inventory_backup_{date.today()}.csv', "text/csv")
+        st.download_button("📥 下載庫存總表 (CSV)", csv, f'inventory_summary_{date.today()}.csv', "text/csv")
     
-    # 支援 Excel 上傳
-    uploaded_file = st.file_uploader("📤 上傳庫存 (CSV/Excel)", type=['csv', 'xlsx', 'xls'])
+    # ★★★ 下載進貨明細 ★★★
+    hist_to_download = st.session_state['history']
+    if not hist_to_download.empty:
+        hist_csv = hist_to_download.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 下載進貨明細 (CSV)", hist_csv, f'purchase_history_{date.today()}.csv', "text/csv")
+    
+    uploaded_file = st.file_uploader("📤 上傳復原庫存總表", type=['csv', 'xlsx', 'xls'])
     
     if uploaded_file is not None:
         try:
-            # 判斷副檔名
             if uploaded_file.name.endswith('.csv'):
                 uploaded_df = pd.read_csv(uploaded_file)
             else:
-                # 讀取 Excel (需安裝 openpyxl)
                 uploaded_df = pd.read_excel(uploaded_file)
             
-            # 檢查必要欄位
             if set(COLUMNS).issubset(uploaded_df.columns):
                 uploaded_df['編號'] = uploaded_df['編號'].astype(str)
-                # 確保數值正確
                 uploaded_df['單顆成本'] = pd.to_numeric(uploaded_df['單顆成本'], errors='coerce').fillna(0)
                 uploaded_df['庫存(顆)'] = pd.to_numeric(uploaded_df['庫存(顆)'], errors='coerce').fillna(0)
                 
-                if st.button("⚠️ 確認覆蓋目前資料"):
+                if st.button("⚠️ 確認覆蓋庫存總表"):
                     st.session_state['inventory'] = uploaded_df
                     st.success("資料已還原！")
                     st.rerun()
             else:
-                st.error(f"格式錯誤！Excel 必須包含這些標題：{', '.join(COLUMNS)}")
-                
+                st.error(f"格式錯誤！需包含：{', '.join(COLUMNS)}")
         except Exception as e:
             st.error(f"讀取失敗: {e}")
 
@@ -162,7 +173,6 @@ if page == "📦 庫存管理與進貨":
             with c3: new_size = st.number_input("尺寸 (mm)", 0.0, step=0.5, format="%.1f")
             
             c4, c5, c6 = st.columns(3)
-            # ★★★ 修改重點：新增「方體」與「長柱」選項 ★★★
             with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型"])
             with c5: new_element = st.selectbox("五行", ["金", "木", "水", "火", "土", "綜合"])
             with c6: new_supplier = st.selectbox("廠商", SUPPLIERS)
@@ -177,6 +187,8 @@ if page == "📦 庫存管理與進貨":
                 else:
                     new_id = generate_new_id(new_cat, st.session_state['inventory'])
                     unit_cost = new_price / new_qty if new_qty > 0 else 0
+                    
+                    # 1. 更新庫存總表
                     new_row = {
                         '編號': new_id, '分類': new_cat, '名稱': new_name, '尺寸mm': new_size,
                         '形狀': new_shape, '五行': new_element, '進貨總價': new_price,
@@ -184,6 +196,16 @@ if page == "📦 庫存管理與進貨":
                         '庫存(顆)': new_qty, '單顆成本': unit_cost
                     }
                     st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_row])], ignore_index=True)
+                    
+                    # 2. ★★★ 寫入歷史明細 ★★★
+                    hist_entry = {
+                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        '動作': '新品新增', '編號': new_id, '分類': new_cat, '名稱': new_name,
+                        '尺寸mm': new_size, '形狀': new_shape, '廠商': new_supplier,
+                        '進貨數量': new_qty, '進貨總價': new_price, '單價': unit_cost
+                    }
+                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
+                    
                     st.success(f"新增成功：{new_id}")
                     st.rerun()
 
@@ -219,7 +241,29 @@ if page == "📦 庫存管理與進貨":
         st.rerun()
 
 # ------------------------------------------
-# 頁面 B: 設計 (扣庫存功能區)
+# 頁面 B: 進貨紀錄查詢 (新頁面)
+# ------------------------------------------
+elif page == "📜 進貨紀錄查詢":
+    st.header("📜 進貨歷史明細")
+    st.info("這裡紀錄了每一次的新增與補貨動作，不會因為合併而消失。")
+    
+    if not st.session_state['history'].empty:
+        # 顯示最新的在最上面
+        show_hist = st.session_state['history'].sort_values(by='紀錄時間', ascending=False)
+        st.dataframe(
+            show_hist, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "單價": st.column_config.NumberColumn(format="$%.1f"),
+                "進貨總價": st.column_config.NumberColumn(format="$%d"),
+            }
+        )
+    else:
+        st.warning("目前還沒有進貨紀錄。")
+
+# ------------------------------------------
+# 頁面 C: 設計 (扣庫存功能區)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.header("📿 手鍊設計工作檯")
@@ -256,21 +300,56 @@ elif page == "🧮 設計與成本計算":
             
             st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
-            qty = st.number_input("使用數量", 1)
+            # 補貨模式開關
+            is_restock = st.checkbox("我要對此商品進行「補貨」")
             
-            if st.button("⬇️ 加入設計圖", type="primary"):
-                new_entry = {
-                    '編號': str(item['編號']),
-                    '分類': str(item['分類']),
-                    '名稱': str(item['名稱']),
-                    '規格': f"{item['尺寸mm']}mm {item['形狀']}",
-                    '使用數量': int(qty),
-                    '單價': float(item['單顆成本']),
-                    '小計': float(item['單顆成本']) * int(qty)
-                }
-                st.session_state['current_design'].append(new_entry)
-                st.success("已加入！")
-                st.rerun()
+            qty = st.number_input("數量", 1)
+            
+            if is_restock:
+                restock_price = st.number_input("補貨總價", 0)
+                restock_supplier = st.selectbox("補貨廠商", SUPPLIERS)
+                
+                if st.button("🔄 確認補貨", type="secondary"):
+                    idx = df.index[df['編號'] == item['編號']].tolist()[0]
+                    
+                    old_stock = df.at[idx, '庫存(顆)']
+                    old_cost = df.at[idx, '單顆成本']
+                    
+                    new_total_val = (old_stock * old_cost) + restock_price
+                    new_total_qty = old_stock + qty
+                    new_avg_cost = new_total_val / new_total_qty if new_total_qty > 0 else 0
+                    
+                    # 更新總表
+                    df.at[idx, '庫存(顆)'] = new_total_qty
+                    df.at[idx, '單顆成本'] = new_avg_cost
+                    df.at[idx, '進貨廠商'] = restock_supplier # 更新為最新廠商
+                    st.session_state['inventory'] = df
+                    
+                    # ★★★ 寫入歷史明細 ★★★
+                    hist_entry = {
+                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        '動作': '舊品補貨', '編號': item['編號'], '分類': item['分類'], '名稱': item['名稱'],
+                        '尺寸mm': item['尺寸mm'], '形狀': item['形狀'], '廠商': restock_supplier,
+                        '進貨數量': qty, '進貨總價': restock_price, '單價': restock_price/qty if qty>0 else 0
+                    }
+                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
+                    
+                    st.success("補貨完成！")
+                    st.rerun()
+            else:
+                if st.button("⬇️ 加入設計圖", type="primary"):
+                    new_entry = {
+                        '編號': str(item['編號']),
+                        '分類': str(item['分類']),
+                        '名稱': str(item['名稱']),
+                        '規格': f"{item['尺寸mm']}mm {item['形狀']}",
+                        '使用數量': int(qty),
+                        '單價': float(item['單顆成本']),
+                        '小計': float(item['單顆成本']) * int(qty)
+                    }
+                    st.session_state['current_design'].append(new_entry)
+                    st.success("已加入！")
+                    st.rerun()
         else:
             if selected_cat == "全部":
                 st.warning("庫存無資料，請先新增")
