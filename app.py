@@ -129,7 +129,6 @@ with st.sidebar:
         st.download_button("📥 下載進貨明細 (CSV)", hist_csv, f'purchase_history_{date.today()}.csv', "text/csv")
     
     uploaded_file = st.file_uploader("📤 上傳復原庫存總表", type=['csv', 'xlsx', 'xls'])
-    
     if uploaded_file is not None:
         try:
             if uploaded_file.name.endswith('.csv'):
@@ -141,7 +140,6 @@ with st.sidebar:
                 uploaded_df['編號'] = uploaded_df['編號'].astype(str)
                 uploaded_df['單顆成本'] = pd.to_numeric(uploaded_df['單顆成本'], errors='coerce').fillna(0)
                 uploaded_df['庫存(顆)'] = pd.to_numeric(uploaded_df['庫存(顆)'], errors='coerce').fillna(0)
-                
                 if st.button("⚠️ 確認覆蓋庫存總表"):
                     st.session_state['inventory'] = uploaded_df
                     st.success("資料已還原！")
@@ -157,67 +155,79 @@ with st.sidebar:
 if page == "📦 庫存管理與進貨":
     st.subheader("📦 庫存管理")
     
-    # 準備既有名稱清單
-    existing_names = []
-    if not st.session_state['inventory'].empty:
-        existing_names = sorted(st.session_state['inventory']['名稱'].dropna().unique().tolist())
-    name_options = ["➕ 手動輸入新名稱"] + existing_names
-    
-    with st.expander("📝 點擊展開：新增進貨資料", expanded=False):
-        with st.form("add_new_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            with c1: 
-                new_cat = st.selectbox("分類", ["天然石", "配件", "耗材"])
+    # ★★★ 步驟 1: 先選分類與名稱 (這部分移出表單以支援動態更新) ★★★
+    with st.container():
+        st.markdown("##### 1. 選擇商品類型與名稱")
+        c1, c2 = st.columns([1, 2])
+        
+        with c1:
+            # 選擇分類
+            new_cat = st.selectbox("分類", ["天然石", "配件", "耗材"], key="add_cat_select")
+        
+        with c2:
+            # 依據分類篩選既有名稱
+            existing_names = []
+            if not st.session_state['inventory'].empty:
+                # 只抓取該分類下的名稱
+                cat_df = st.session_state['inventory'][st.session_state['inventory']['分類'] == new_cat]
+                existing_names = sorted(cat_df['名稱'].dropna().unique().tolist())
             
-            # ★★★ 修改重點：名稱選擇下拉選單 ★★★
-            with c2: 
-                name_select = st.selectbox("名稱 (選既有或手動)", name_options)
-                new_name_input = st.text_input("↳ 若選手動請輸入", placeholder="例如：紫水晶")
+            name_options = ["➕ 手動輸入新名稱"] + existing_names
+            name_select = st.selectbox("名稱 (自動列出該分類舊稱)", name_options, key="add_name_select")
             
-            with c3: 
-                new_size = st.number_input("尺寸 (mm)", 0.0, step=0.5, format="%.1f")
-            
-            c4, c5, c6 = st.columns(3)
-            with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型"])
-            with c5: new_element = st.selectbox("五行", ["金", "木", "水", "火", "土", "綜合"])
-            with c6: new_supplier = st.selectbox("廠商", SUPPLIERS)
-            
-            c7, c8, c9 = st.columns(3)
-            with c7: new_price = st.number_input("進貨總價", 0)
-            with c8: new_qty = st.number_input("進貨數量", 1)
-            with c9: new_date = st.date_input("進貨日期", value=date.today())
-            
-            if st.form_submit_button("➕ 確認新增"):
-                # 決定最終名稱
-                if name_select == "➕ 手動輸入新名稱":
-                    final_name = new_name_input
-                else:
-                    final_name = name_select
+            final_name = ""
+            if name_select == "➕ 手動輸入新名稱":
+                final_name = st.text_input("請輸入新名稱", placeholder="例如：紫水晶", key="add_name_input")
+            else:
+                final_name = name_select
+
+    # ★★★ 步驟 2: 詳細規格表單 (這部分用 Form 包起來，避免一直重整) ★★★
+    with st.form("add_new_details_form", clear_on_submit=True):
+        st.markdown("##### 2. 填寫詳細規格")
+        
+        c3, c4, c5 = st.columns(3)
+        with c3: new_size = st.number_input("尺寸 (mm)", 0.0, step=0.5, format="%.1f")
+        with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型"])
+        with c5: new_element = st.selectbox("五行", ["金", "木", "水", "火", "土", "綜合"])
+        
+        c6, c7, c8 = st.columns(3)
+        with c6: new_price = st.number_input("進貨總價", 0)
+        with c7: new_qty = st.number_input("進貨數量", 1)
+        with c8: new_supplier = st.selectbox("廠商", SUPPLIERS)
+        
+        new_date = st.date_input("進貨日期", value=date.today())
+        
+        submitted = st.form_submit_button("➕ 確認新增入庫", type="primary")
+
+        if submitted:
+            if not final_name:
+                st.error("❌ 請確認名稱已填寫！")
+            else:
+                new_id = generate_new_id(new_cat, st.session_state['inventory'])
+                unit_cost = new_price / new_qty if new_qty > 0 else 0
                 
-                if not final_name: 
-                    st.error("❌ 需填寫名稱")
-                else:
-                    new_id = generate_new_id(new_cat, st.session_state['inventory'])
-                    unit_cost = new_price / new_qty if new_qty > 0 else 0
-                    
-                    new_row = {
-                        '編號': new_id, '分類': new_cat, '名稱': final_name, '尺寸mm': new_size,
-                        '形狀': new_shape, '五行': new_element, '進貨總價': new_price,
-                        '進貨數量(顆)': new_qty, '進貨日期': new_date, '進貨廠商': new_supplier,
-                        '庫存(顆)': new_qty, '單顆成本': unit_cost
-                    }
-                    st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_row])], ignore_index=True)
-                    
-                    hist_entry = {
-                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        '動作': '新品新增', '編號': new_id, '分類': new_cat, '名稱': final_name,
-                        '尺寸mm': new_size, '形狀': new_shape, '廠商': new_supplier,
-                        '進貨數量': new_qty, '進貨總價': new_price, '單價': unit_cost
-                    }
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
-                    
-                    st.success(f"新增成功：{new_id} {final_name}")
-                    st.rerun()
+                # 1. 更新庫存總表
+                new_row = {
+                    '編號': new_id, '分類': new_cat, '名稱': final_name, '尺寸mm': new_size,
+                    '形狀': new_shape, '五行': new_element, '進貨總價': new_price,
+                    '進貨數量(顆)': new_qty, '進貨日期': new_date, '進貨廠商': new_supplier,
+                    '庫存(顆)': new_qty, '單顆成本': unit_cost
+                }
+                st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_row])], ignore_index=True)
+                
+                # 2. 寫入歷史明細
+                hist_entry = {
+                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    '動作': '新品新增', '編號': new_id, '分類': new_cat, '名稱': final_name,
+                    '尺寸mm': new_size, '形狀': new_shape, '廠商': new_supplier,
+                    '進貨數量': new_qty, '進貨總價': new_price, '單價': unit_cost
+                }
+                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
+                
+                st.success(f"新增成功：{new_id} {final_name}")
+                st.rerun()
+
+    st.divider()
 
     # 自動合併按鈕
     col_msg, col_btn = st.columns([3, 1])
@@ -255,7 +265,6 @@ if page == "📦 庫存管理與進貨":
 # ------------------------------------------
 elif page == "📜 進貨紀錄查詢":
     st.header("📜 進貨歷史明細")
-    st.info("這裡紀錄了每一次的新增與補貨動作，不會因為合併而消失。")
     
     if not st.session_state['history'].empty:
         show_hist = st.session_state['history'].sort_values(by='紀錄時間', ascending=False)
@@ -309,7 +318,6 @@ elif page == "🧮 設計與成本計算":
             
             st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸mm']}mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
-            # 補貨模式
             is_restock = st.checkbox("我要對此商品進行「補貨」")
             
             qty = st.number_input("數量", 1)
