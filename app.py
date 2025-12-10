@@ -32,7 +32,8 @@ def generate_new_id(category, df):
 def merge_inventory_duplicates(df):
     if df.empty: return df, 0
 
-    group_cols = ['分類', '名稱', '尺寸mm', '形狀', '五行']
+    # <--- 修改處：分組條件加入 '寬度mm' 與 '長度mm'
+    group_cols = ['分類', '名稱', '寬度mm', '長度mm', '形狀', '五行']
     
     df['庫存(顆)'] = pd.to_numeric(df['庫存(顆)'], errors='coerce').fillna(0)
     df['單顆成本'] = pd.to_numeric(df['單顆成本'], errors='coerce').fillna(0)
@@ -75,24 +76,26 @@ SUPPLIERS = [
     "祥玥", "雪霖", "晶格格", "愛你一生", "福祿壽銀飾", "億伙", "廠商", "寶城水晶", "Rich"
 ]
 
+# <--- 修改處：欄位名稱更新
 COLUMNS = [
-    '編號', '分類', '名稱', '尺寸mm', '形狀', '五行', 
+    '編號', '分類', '名稱', '寬度mm', '長度mm', '形狀', '五行', 
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
 HISTORY_COLUMNS = [
-    '紀錄時間', '動作', '編號', '分類', '名稱', '尺寸mm', '形狀', 
+    '紀錄時間', '動作', '編號', '分類', '名稱', '寬度mm', '長度mm', '形狀', 
     '廠商', '進貨數量', '進貨總價', '單價'
 ]
 
-DEFAULT_CSV_FILE = 'inventory_backup_2025-12-09.csv'
+DEFAULT_CSV_FILE = 'inventory_backup_v2.csv'
 
-# 內建初始資料
+# <--- 修改處：內建資料格式更新 (補上長度)
 INITIAL_DATA = {
     '編號': ['ST0001', 'ST0002', 'ST0003', 'ST0004', 'ST0005', 'ST0006'],
     '分類': ['天然石', '天然石', '天然石', '天然石', '天然石', '天然石'],
     '名稱': ['冰翠玉', '東菱玉', '紫水晶', '東菱玉', '東菱玉', '綠碧璽'],
-    '尺寸mm': [3.0, 5.0, 8.0, 6.0, 8.0, 8.0],
+    '寬度mm': [3.0, 5.0, 8.0, 6.0, 8.0, 8.0],     # 這是原本的尺寸
+    '長度mm': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     # 預設圓珠長度為 0
     '形狀': ['切角', '切角', '圓珠', '切角', '切角', '圓珠'],
     '五行': ['木', '木', '火', '木', '木', '木'],
     '進貨總價': [100, 180, 450, 132, 100, 550],
@@ -110,6 +113,12 @@ if 'inventory' not in st.session_state:
             df_init = pd.read_csv(DEFAULT_CSV_FILE)
             df_init['編號'] = df_init['編號'].astype(str)
             df_init['單顆成本'] = pd.to_numeric(df_init['單顆成本'], errors='coerce').fillna(0)
+            
+            # 檢查新舊欄位兼容性 (若讀取到舊版 CSV 可能會缺欄位，這裡做簡單防呆)
+            if '寬度mm' not in df_init.columns and '尺寸mm' in df_init.columns:
+                df_init['寬度mm'] = df_init['尺寸mm']
+                df_init['長度mm'] = 0
+            
             if set(COLUMNS).issubset(df_init.columns):
                 st.session_state['inventory'] = df_init
                 file_loaded = True
@@ -128,8 +137,8 @@ if 'current_design' not in st.session_state:
 # 3. UI 介面設計
 # ==========================================
 
-st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
-st.title("💎 GemCraft 庫存管理系統")
+st.set_page_config(page_title="GemCraft 庫存管理系統 V2", layout="wide")
+st.title("💎 GemCraft 庫存管理系統 V2 (雙尺寸版)")
 
 with st.sidebar:
     st.header("功能導航")
@@ -155,16 +164,27 @@ with st.sidebar:
             else:
                 uploaded_df = pd.read_excel(uploaded_file)
             
+            # <--- 修改處：欄位驗證更新
+            # 允許舊版上傳自動修復
+            if '尺寸mm' in uploaded_df.columns and '寬度mm' not in uploaded_df.columns:
+                uploaded_df.rename(columns={'尺寸mm': '寬度mm'}, inplace=True)
+                uploaded_df['長度mm'] = 0.0
+                st.info("💡 檢測到舊版格式，已自動轉換為新版欄位。")
+
             if set(COLUMNS).issubset(uploaded_df.columns):
                 uploaded_df['編號'] = uploaded_df['編號'].astype(str)
                 uploaded_df['單顆成本'] = pd.to_numeric(uploaded_df['單顆成本'], errors='coerce').fillna(0)
                 uploaded_df['庫存(顆)'] = pd.to_numeric(uploaded_df['庫存(顆)'], errors='coerce').fillna(0)
+                # 確保尺寸是數字
+                uploaded_df['寬度mm'] = pd.to_numeric(uploaded_df['寬度mm'], errors='coerce').fillna(0)
+                uploaded_df['長度mm'] = pd.to_numeric(uploaded_df['長度mm'], errors='coerce').fillna(0)
+
                 if st.button("⚠️ 確認覆蓋庫存總表"):
                     st.session_state['inventory'] = uploaded_df
                     st.success("資料已還原！")
                     st.rerun()
             else:
-                st.error(f"格式錯誤！需包含：{', '.join(COLUMNS)}")
+                st.error(f"格式錯誤！需包含新欄位：寬度mm, 長度mm (或原有的 尺寸mm)")
         except Exception as e:
             st.error(f"讀取失敗: {e}")
 
@@ -177,7 +197,7 @@ if page == "📦 庫存管理與進貨":
     # ★★★ 互動區：分類、名稱、尺寸 (移出表單以支援動態更新) ★★★
     with st.container():
         st.markdown("##### 1. 選擇商品基本資料")
-        c1, c2, c3 = st.columns([1, 1.5, 1])
+        c1, c2, c3, c3_5 = st.columns([1, 1.5, 1, 1])
         
         with c1:
             new_cat = st.selectbox("分類", ["天然石", "配件", "耗材"], key="add_cat_select")
@@ -199,19 +219,24 @@ if page == "📦 庫存管理與進貨":
                 final_name = name_select
 
         with c3:
-            # ★★★ 新增：尺寸智慧選單 ★★★
-            existing_sizes = []
+            # <--- 修改處：寬度 (主尺寸)
+            existing_widths = []
             if not st.session_state['inventory'].empty:
-                existing_sizes = sorted(st.session_state['inventory']['尺寸mm'].dropna().unique().tolist())
+                existing_widths = sorted(st.session_state['inventory']['寬度mm'].dropna().unique().tolist())
             
-            size_options = ["➕ 手動輸入"] + existing_sizes
-            size_select = st.selectbox("尺寸 (mm/cm)", size_options, key="add_size_select")
+            width_options = ["➕ 手動輸入"] + existing_widths
+            width_select = st.selectbox("寬度/直徑 (mm)", width_options, key="add_width_select")
             
-            final_size = 0.0
-            if size_select == "➕ 手動輸入":
-                final_size = st.number_input("↳ 輸入新尺寸", min_value=0.0, step=0.5, format="%.1f", key="add_size_input")
+            final_width = 0.0
+            if width_select == "➕ 手動輸入":
+                final_width = st.number_input("↳ 輸入寬度", min_value=0.0, step=0.5, format="%.1f", key="add_width_input")
             else:
-                final_size = float(size_select)
+                final_width = float(width_select)
+        
+        with c3_5:
+             # <--- 修改處：長度 (副尺寸)
+            final_length = st.number_input("長度 (mm)", min_value=0.0, step=0.5, format="%.1f", help="圓珠請填 0，桶珠請填長度", key="add_length_input")
+
 
     # ★★★ 表單區：其餘詳細規格 ★★★
     with st.form("add_new_details_form", clear_on_submit=True):
@@ -237,7 +262,8 @@ if page == "📦 庫存管理與進貨":
                 unit_cost = new_price / new_qty if new_qty > 0 else 0
                 
                 new_row = {
-                    '編號': new_id, '分類': new_cat, '名稱': final_name, '尺寸mm': final_size,
+                    '編號': new_id, '分類': new_cat, '名稱': final_name, 
+                    '寬度mm': final_width, '長度mm': final_length, # <--- 寫入兩個欄位
                     '形狀': new_shape, '五行': new_element, '進貨總價': new_price,
                     '進貨數量(顆)': new_qty, '進貨日期': new_date, '進貨廠商': new_supplier,
                     '庫存(顆)': new_qty, '單顆成本': unit_cost
@@ -247,17 +273,19 @@ if page == "📦 庫存管理與進貨":
                 hist_entry = {
                     '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
                     '動作': '新品新增', '編號': new_id, '分類': new_cat, '名稱': final_name,
-                    '尺寸mm': final_size, '形狀': new_shape, '廠商': new_supplier,
+                    '寬度mm': final_width, '長度mm': final_length,
+                    '形狀': new_shape, '廠商': new_supplier,
                     '進貨數量': new_qty, '進貨總價': new_price, '單價': unit_cost
                 }
                 st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
                 
-                st.success(f"新增成功：{new_id} {final_name} ({final_size}mm)")
+                size_display = f"{final_width}x{final_length}" if final_length > 0 else f"{final_width}"
+                st.success(f"新增成功：{new_id} {final_name} ({size_display}mm)")
                 st.rerun()
 
     col_msg, col_btn = st.columns([3, 1])
     with col_msg:
-        st.caption("提示：若有相同分類、名稱、規格的商品，可使用自動合併整理庫存。")
+        st.caption("提示：若有相同分類、名稱、寬度、長度的商品，可使用自動合併。")
     with col_btn:
         if st.button("🧹 自動合併重複商品"):
             merged_df, count = merge_inventory_duplicates(st.session_state['inventory'])
@@ -274,11 +302,13 @@ if page == "📦 庫存管理與進貨":
 
     edited_df = st.data_editor(
         current_df, use_container_width=True, hide_index=True, num_rows="dynamic",
-        column_order=("編號", "分類", "名稱", "尺寸mm", "形狀", "庫存(顆)", "單顆成本", "進貨廠商"),
+        # <--- 修改處：顯示順序包含寬與長
+        column_order=("編號", "分類", "名稱", "寬度mm", "長度mm", "形狀", "庫存(顆)", "單顆成本", "進貨廠商"),
         disabled=["編號", "單顆成本"],
         column_config={
             "單顆成本": st.column_config.NumberColumn(format="$%.1f"),
-            "尺寸mm": st.column_config.NumberColumn(label="尺寸 (mm/cm)", format="%.1f"),
+            "寬度mm": st.column_config.NumberColumn(label="寬度 (mm)", format="%.1f"),
+            "長度mm": st.column_config.NumberColumn(label="長度 (mm)", format="%.1f"),
         }
     )
     if not edited_df.equals(current_df):
@@ -300,7 +330,8 @@ elif page == "📜 進貨紀錄查詢":
             column_config={
                 "單價": st.column_config.NumberColumn(format="$%.1f"),
                 "進貨總價": st.column_config.NumberColumn(format="$%d"),
-                "尺寸mm": st.column_config.NumberColumn(label="尺寸 (mm/cm)", format="%.1f"),
+                "寬度mm": st.column_config.NumberColumn(format="%.1f"),
+                "長度mm": st.column_config.NumberColumn(format="%.1f"),
             }
         )
     else:
@@ -329,12 +360,23 @@ elif page == "🧮 設計與成本計算":
         if not valid_df.empty:
             valid_df['五行'] = valid_df['五行'].fillna('未分類')
             valid_df['名稱'] = valid_df['名稱'].fillna('')
+            # 確保欄位存在 (防止資料不乾淨)
+            if '長度mm' not in valid_df.columns: valid_df['長度mm'] = 0
+            
             valid_df = valid_df.sort_values(by=['五行', '名稱'])
             
+            # <--- 修改處：顯示名稱邏輯優化
+            def format_size(row):
+                w = row['寬度mm']
+                l = row['長度mm']
+                return f"{w}" if l == 0 else f"{w}x{l}"
+
+            valid_df['尺寸顯示'] = valid_df.apply(format_size, axis=1)
+
             valid_df['顯示名稱'] = (
                 "[" + valid_df['五行'].astype(str) + "] " +
                 valid_df['名稱'].astype(str) + 
-                " (" + valid_df['尺寸mm'].astype(str) + " mm/cm " + valid_df['形狀'].astype(str) + ")" +
+                " (" + valid_df['尺寸顯示'] + "mm " + valid_df['形狀'].astype(str) + ")" +
                 " | " + valid_df['編號'].astype(str)
             )
             
@@ -342,7 +384,7 @@ elif page == "🧮 設計與成本計算":
             
             item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
             
-            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸mm']} (mm/cm) {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
+            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸顯示']} mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
             is_restock = st.checkbox("我要對此商品進行「補貨」")
             
@@ -370,7 +412,8 @@ elif page == "🧮 設計與成本計算":
                     hist_entry = {
                         '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
                         '動作': '舊品補貨', '編號': item['編號'], '分類': item['分類'], '名稱': item['名稱'],
-                        '尺寸mm': item['尺寸mm'], '形狀': item['形狀'], '廠商': restock_supplier,
+                        '寬度mm': item['寬度mm'], '長度mm': item['長度mm'],
+                        '形狀': item['形狀'], '廠商': restock_supplier,
                         '進貨數量': qty, '進貨總價': restock_price, '單價': restock_price/qty if qty>0 else 0
                     }
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([hist_entry])], ignore_index=True)
@@ -383,7 +426,7 @@ elif page == "🧮 設計與成本計算":
                         '編號': str(item['編號']),
                         '分類': str(item['分類']),
                         '名稱': str(item['名稱']),
-                        '規格': f"{item['尺寸mm']} (mm/cm) {item['形狀']}",
+                        '規格': f"{item['尺寸顯示']}mm {item['形狀']}",
                         '使用數量': int(qty),
                         '單價': float(item['單顆成本']),
                         '小計': float(item['單顆成本']) * int(qty)
