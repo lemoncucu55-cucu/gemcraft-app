@@ -112,21 +112,41 @@ with st.sidebar:
     page = st.radio("前往", ["📦 庫存管理與進貨", "🧮 設計與成本計算"])
     st.divider()
     st.header("💾 資料備份")
+    
+    # 下載仍維持 CSV (相容性最好)
     df_to_download = st.session_state['inventory']
     if not df_to_download.empty:
         csv = df_to_download.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 下載庫存表 (CSV)", csv, f'inventory_backup_{date.today()}.csv', "text/csv")
     
-    uploaded_file = st.file_uploader("📤 上傳復原庫存 (CSV)", type=['csv'])
+    # 支援 Excel 上傳
+    uploaded_file = st.file_uploader("📤 上傳庫存 (CSV/Excel)", type=['csv', 'xlsx', 'xls'])
+    
     if uploaded_file is not None:
         try:
-            uploaded_df = pd.read_csv(uploaded_file)
-            uploaded_df['編號'] = uploaded_df['編號'].astype(str)
-            if st.button("⚠️ 確認覆蓋目前資料"):
-                st.session_state['inventory'] = uploaded_df
-                st.success("資料已還原！")
-                st.rerun()
-        except: st.error("讀取失敗")
+            # 判斷副檔名
+            if uploaded_file.name.endswith('.csv'):
+                uploaded_df = pd.read_csv(uploaded_file)
+            else:
+                # 讀取 Excel (需安裝 openpyxl)
+                uploaded_df = pd.read_excel(uploaded_file)
+            
+            # 檢查必要欄位
+            if set(COLUMNS).issubset(uploaded_df.columns):
+                uploaded_df['編號'] = uploaded_df['編號'].astype(str)
+                # 確保數值正確
+                uploaded_df['單顆成本'] = pd.to_numeric(uploaded_df['單顆成本'], errors='coerce').fillna(0)
+                uploaded_df['庫存(顆)'] = pd.to_numeric(uploaded_df['庫存(顆)'], errors='coerce').fillna(0)
+                
+                if st.button("⚠️ 確認覆蓋目前資料"):
+                    st.session_state['inventory'] = uploaded_df
+                    st.success("資料已還原！")
+                    st.rerun()
+            else:
+                st.error(f"格式錯誤！Excel 必須包含這些標題：{', '.join(COLUMNS)}")
+                
+        except Exception as e:
+            st.error(f"讀取失敗: {e}")
 
 # ------------------------------------------
 # 頁面 A: 庫存管理
@@ -142,7 +162,8 @@ if page == "📦 庫存管理與進貨":
             with c3: new_size = st.number_input("尺寸 (mm)", 0.0, step=0.5, format="%.1f")
             
             c4, c5, c6 = st.columns(3)
-            with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "不規則", "造型"])
+            # ★★★ 修改重點：新增「方體」與「長柱」選項 ★★★
+            with c4: new_shape = st.selectbox("形狀", ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型"])
             with c5: new_element = st.selectbox("五行", ["金", "木", "水", "火", "土", "綜合"])
             with c6: new_supplier = st.selectbox("廠商", SUPPLIERS)
             
@@ -166,7 +187,7 @@ if page == "📦 庫存管理與進貨":
                     st.success(f"新增成功：{new_id}")
                     st.rerun()
 
-    # ★★★ 新增：自動合併按鈕 ★★★
+    # 自動合併按鈕
     col_msg, col_btn = st.columns([3, 1])
     with col_msg:
         st.caption("提示：若有相同分類、名稱、規格的商品，可使用自動合併整理庫存。")
@@ -238,7 +259,6 @@ elif page == "🧮 設計與成本計算":
             qty = st.number_input("使用數量", 1)
             
             if st.button("⬇️ 加入設計圖", type="primary"):
-                # 將編號也存入，方便後續扣庫存
                 new_entry = {
                     '編號': str(item['編號']),
                     '分類': str(item['分類']),
@@ -286,11 +306,9 @@ elif page == "🧮 設計與成本計算":
             final_total = total + labor + other
             st.metric("總成本", f"NT$ {final_total:.1f}")
             
-            # ★★★ 新增：扣庫存與清空按鈕 ★★★
             col_action1, col_action2 = st.columns(2)
             
             with col_action1:
-                # 扣庫存邏輯
                 if st.button("✅ 確認售出 (扣除庫存)", type="primary", use_container_width=True):
                     inv_df = st.session_state['inventory']
                     all_success = True
@@ -299,7 +317,6 @@ elif page == "🧮 設計與成本計算":
                         target_id = row['編號']
                         use_qty = row['使用數量']
                         
-                        # 找對應的庫存行
                         idx_list = inv_df.index[inv_df['編號'].astype(str) == target_id].tolist()
                         
                         if idx_list:
@@ -312,7 +329,7 @@ elif page == "🧮 設計與成本計算":
                     
                     if all_success:
                         st.session_state['inventory'] = inv_df
-                        st.session_state['current_design'] = [] # 售出後自動清空清單
+                        st.session_state['current_design'] = []
                         st.toast("🎉 售出成功！庫存已更新", icon="✅")
                         st.rerun()
 
