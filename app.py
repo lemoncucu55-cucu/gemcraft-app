@@ -41,6 +41,30 @@ def generate_new_id(category, df):
     
     return f"{prefix}{str(max_num + 1).zfill(4)}"
 
+# ★★★ 新增：產生訂單編號 ★★★
+def generate_order_id(df_sales):
+    today_str = datetime.now().strftime("%Y%m%d")
+    prefix = f"ORD-{today_str}-"
+    
+    if df_sales.empty:
+        return f"{prefix}001"
+    
+    # 找出當天已存在的最大序號
+    # 這裡簡單過濾出包含今天日期的訂單號
+    relevant_ids = [x for x in df_sales['訂單編號'].unique() if isinstance(x, str) and x.startswith(prefix)]
+    
+    if not relevant_ids:
+        return f"{prefix}001"
+    
+    max_seq = 0
+    for oid in relevant_ids:
+        try:
+            seq = int(oid.split("-")[-1])
+            if seq > max_seq: max_seq = seq
+        except: pass
+        
+    return f"{prefix}{str(max_seq + 1).zfill(3)}"
+
 def merge_inventory_duplicates(df):
     if df.empty: return df, 0
     if '長度mm' not in df.columns: df['長度mm'] = 0.0
@@ -99,9 +123,10 @@ HISTORY_COLUMNS = [
     '廠商', '進貨數量', '進貨總價', '單價'
 ]
 
-# ★★★ 新增：銷售紀錄欄位 ★★★
+# ★★★ 修改：銷售紀錄欄位 (加入訂單號與總金額) ★★★
 SALES_COLUMNS = [
-    '銷售時間', '編號', '分類', '名稱', '規格', '售出數量', '成本單價', '售出小計'
+    '訂單編號', '銷售時間', '編號', '分類', '名稱', '規格', '售出數量', 
+    '成本單價', '售出小計', '工資', '雜支', '訂單總金額'
 ]
 
 DEFAULT_CSV_FILE = 'inventory_backup.csv'
@@ -131,7 +156,6 @@ if 'inventory' not in st.session_state:
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
 
-# ★★★ 新增：銷售紀錄初始化 ★★★
 if 'sales_history' not in st.session_state:
     st.session_state['sales_history'] = pd.DataFrame(columns=SALES_COLUMNS)
 
@@ -142,12 +166,11 @@ if 'current_design' not in st.session_state:
 # 3. UI 介面設計
 # ==========================================
 
-st.set_page_config(page_title="GemCraft 庫存系統 V2.6", layout="wide")
+st.set_page_config(page_title="GemCraft 庫存系統 V2.7", layout="wide")
 st.title("💎 GemCraft 庫存管理系統")
 
 with st.sidebar:
     st.header("功能導航")
-    # 稍微調整選單名稱，讓意圖更明確
     page = st.radio("前往", ["📦 庫存管理與進貨", "📜 歷史紀錄查詢 (進貨/售出)", "🧮 設計與成本計算"])
     st.divider()
     st.header("💾 資料備份")
@@ -157,7 +180,6 @@ with st.sidebar:
         csv = df_to_download.to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 下載庫存總表 (CSV)", csv, f'inventory_{date.today()}.csv', "text/csv")
     
-    # 下載銷售紀錄
     sales_to_download = st.session_state['sales_history']
     if not sales_to_download.empty:
         sales_csv = sales_to_download.to_csv(index=False).encode('utf-8-sig')
@@ -284,17 +306,15 @@ if page == "📦 庫存管理與進貨":
         st.rerun()
 
 # ------------------------------------------
-# 頁面 B: 歷史紀錄 (進貨 & 售出)
+# 頁面 B: 歷史紀錄
 # ------------------------------------------
 elif page == "📜 歷史紀錄查詢 (進貨/售出)":
     st.header("📜 歷史紀錄中心")
-    
-    # 使用 Tabs 分頁
-    tab1, tab2 = st.tabs(["📥 進貨紀錄", "📤 售出紀錄"])
+    tab1, tab2 = st.tabs(["📥 進貨紀錄", "📤 售出紀錄 (含訂單)"])
 
-    # === Tab 1: 進貨紀錄 (維持 V2.4 邏輯) ===
+    # Tab 1: 進貨
     with tab1:
-        st.info("💡 說明：若進貨資料有誤，勾選並確認撤銷，系統會**自動扣除庫存**並**還原成本**。")
+        st.info("說明：勾選撤銷可還原庫存與成本。")
         if not st.session_state['history'].empty:
             hist_df = st.session_state['history'].sort_values('紀錄時間', ascending=False).copy()
             if '撤銷選取' not in hist_df.columns: hist_df.insert(0, "撤銷選取", False)
@@ -302,17 +322,15 @@ elif page == "📜 歷史紀錄查詢 (進貨/售出)":
             edited_hist = st.data_editor(
                 hist_df, use_container_width=True, hide_index=True,
                 column_config={
-                    "撤銷選取": st.column_config.CheckboxColumn("勾選撤銷", help="復原庫存"),
+                    "撤銷選取": st.column_config.CheckboxColumn("勾選撤銷"),
                     "單價": st.column_config.NumberColumn(format="$%.1f"),
                     "進貨總價": st.column_config.NumberColumn(format="$%d"),
                 },
                 disabled=["紀錄時間", "動作", "編號", "分類", "名稱", "寬度mm", "長度mm", "形狀", "廠商", "進貨數量", "進貨總價", "單價"]
             )
-
-            if st.button("↩️ 確認撤銷進貨 (刪紀錄+還原庫存)", type="primary"):
+            if st.button("↩️ 確認撤銷進貨", type="primary"):
                 to_revert = edited_hist[edited_hist['撤銷選取'] == True]
-                if to_revert.empty:
-                    st.warning("請先勾選項目！")
+                if to_revert.empty: st.warning("請先勾選項目")
                 else:
                     inv_df = st.session_state['inventory']
                     revert_count = 0
@@ -322,7 +340,6 @@ elif page == "📜 歷史紀錄查詢 (進貨/售出)":
                         val_to_remove = float(row['進貨總價'])
                         mask = (inv_df['編號'] == target_id) & (inv_df['進貨廠商'] == row['廠商'])
                         target_rows = inv_df[mask]
-
                         if not target_rows.empty:
                             target_idx = target_rows.index[0]
                             current_stock = float(inv_df.at[target_idx, '庫存(顆)'])
@@ -336,31 +353,37 @@ elif page == "📜 歷史紀錄查詢 (進貨/售出)":
                             inv_df.at[target_idx, '庫存(顆)'] = new_stock
                             inv_df.at[target_idx, '單顆成本'] = new_cost
                             revert_count += 1
-                        else: st.toast(f"找不到對應庫存：{target_id}，僅刪除紀錄。", icon="⚠️")
-
+                        else: st.toast(f"找不到對應庫存：{target_id}", icon="⚠️")
                     st.session_state['inventory'] = inv_df
-                    final_hist = edited_hist[edited_hist['撤銷選取'] == False].drop(columns=['撤銷選取'])
-                    st.session_state['history'] = final_hist
-                    st.success(f"成功撤銷 {revert_count} 筆進貨，成本已還原！")
+                    st.session_state['history'] = edited_hist[edited_hist['撤銷選取'] == False].drop(columns=['撤銷選取'])
+                    st.success(f"成功撤銷 {revert_count} 筆")
                     st.rerun()
         else: st.warning("無進貨紀錄")
 
-    # === Tab 2: 售出紀錄 (★ 新功能) ===
+    # Tab 2: 售出 (★ 顯示訂單資訊)
     with tab2:
-        st.info("💡 說明：此處顯示所有已售出商品。若勾選撤銷，系統會**自動將商品加回庫存** (視為退貨)。")
+        st.info("說明：每筆訂單包含工資與雜支。勾選撤銷可將商品加回庫存。")
         
         if not st.session_state['sales_history'].empty:
-            sales_df = st.session_state['sales_history'].sort_values('銷售時間', ascending=False).copy()
+            sales_df = st.session_state['sales_history'].sort_values(['訂單編號', '銷售時間'], ascending=[False, False]).copy()
+            
+            # 確保新欄位存在 (防呆：針對舊版 sales log)
+            for col in ['工資', '雜支', '訂單總金額', '訂單編號']:
+                if col not in sales_df.columns: sales_df[col] = 0 if col != '訂單編號' else '-'
+            
             if '撤銷選取' not in sales_df.columns: sales_df.insert(0, "撤銷選取", False)
 
             edited_sales = st.data_editor(
                 sales_df, use_container_width=True, hide_index=True,
                 column_config={
-                    "撤銷選取": st.column_config.CheckboxColumn("勾選撤銷", help="商品將加回庫存"),
+                    "撤銷選取": st.column_config.CheckboxColumn("勾選撤銷"),
                     "成本單價": st.column_config.NumberColumn(format="$%.1f"),
                     "售出小計": st.column_config.NumberColumn(format="$%.1f"),
+                    "工資": st.column_config.NumberColumn(format="$%d"),
+                    "雜支": st.column_config.NumberColumn(format="$%d"),
+                    "訂單總金額": st.column_config.NumberColumn(format="$%d", help="含工資與雜支的總價"),
                 },
-                disabled=["銷售時間", "編號", "分類", "名稱", "規格", "售出數量", "成本單價", "售出小計"]
+                disabled=["訂單編號", "銷售時間", "編號", "分類", "名稱", "規格", "售出數量", "成本單價", "售出小計", "工資", "雜支", "訂單總金額"]
             )
 
             if st.button("↩️ 確認撤銷售出 (退貨/加回庫存)", type="primary"):
@@ -374,98 +397,72 @@ elif page == "📜 歷史紀錄查詢 (進貨/售出)":
                     for idx, row in to_revert_sales.iterrows():
                         target_id = row['編號']
                         qty_to_restore = float(row['售出數量'])
-                        
-                        # 尋找庫存並加回
-                        # 注意：這裡只對編號，若有合併過可能需要更細的邏輯，目前假設編號唯一
                         idx_list = inv_df.index[inv_df['編號'].astype(str) == target_id].tolist()
                         
                         if idx_list:
                             target_idx = idx_list[0]
                             current_stock = float(inv_df.at[target_idx, '庫存(顆)'])
-                            # 售出撤銷 = 加回庫存 (成本單價不變，因為只是把原本的東西放回去)
                             inv_df.at[target_idx, '庫存(顆)'] = current_stock + qty_to_restore
                             restore_count += 1
                         else:
-                            st.toast(f"警告：找不到庫存編號 {target_id}，無法還原數量，僅刪除紀錄。", icon="⚠️")
+                            st.toast(f"找不到庫存編號 {target_id}，僅刪除紀錄。", icon="⚠️")
 
                     st.session_state['inventory'] = inv_df
                     final_sales = edited_sales[edited_sales['撤銷選取'] == False].drop(columns=['撤銷選取'])
                     st.session_state['sales_history'] = final_sales
-                    st.success(f"成功撤銷 {restore_count} 筆售出紀錄，庫存已補回！")
+                    st.success(f"已撤銷 {restore_count} 筆售出紀錄，庫存已補回！")
                     st.rerun()
         else:
             st.warning("尚無售出紀錄")
 
 # ------------------------------------------
-# 頁面 C: 設計 (★ 寫入售出紀錄)
+# 頁面 C: 設計 (★ 產生訂單)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.header("📿 手鍊設計工作檯")
-
     col1, col2 = st.columns([1, 1.5])
 
     with col1:
         st.subheader("1. 選擇材料")
         df = st.session_state['inventory']
-        
         cat_options = ["全部"] + ["天然石", "配件", "耗材"]
         selected_cat = st.radio("🔍 依分類篩選", cat_options, horizontal=True)
-
         valid_df = df[df['編號'].notna()].copy()
-        
-        if selected_cat != "全部":
-            valid_df = valid_df[valid_df['分類'] == selected_cat]
+        if selected_cat != "全部": valid_df = valid_df[valid_df['分類'] == selected_cat]
 
         if not valid_df.empty:
             valid_df['五行'] = valid_df['五行'].fillna('未分類')
             valid_df['名稱'] = valid_df['名稱'].fillna('')
             if '長度mm' not in valid_df.columns: valid_df['長度mm'] = 0
-            
             valid_df = valid_df.sort_values(by=['五行', '名稱'])
             
             def format_size(row):
-                w = row['寬度mm']
-                l = row['長度mm']
+                w = row['寬度mm']; l = row['長度mm']
                 return f"{w}" if l == 0 else f"{w}x{l}"
-
             valid_df['尺寸顯示'] = valid_df.apply(format_size, axis=1)
-
-            valid_df['顯示名稱'] = (
-                "[" + valid_df['五行'].astype(str) + "] " +
-                valid_df['名稱'].astype(str) + 
-                " (" + valid_df['尺寸顯示'] + "mm " + valid_df['形狀'].astype(str) + ")" +
-                " | " + valid_df['編號'].astype(str)
-            )
+            valid_df['顯示名稱'] = "[" + valid_df['五行'].astype(str) + "] " + valid_df['名稱'].astype(str) + " (" + valid_df['尺寸顯示'] + "mm " + valid_df['形狀'].astype(str) + ")" + " | " + valid_df['編號'].astype(str)
             
             option_display = st.selectbox("搜尋材料", valid_df['顯示名稱'])
-            
             item = valid_df[valid_df['顯示名稱'] == option_display].iloc[0]
-            
-            st.info(f"**{item['名稱']}**\n\n分類: {item['分類']} | 五行: {item['五行']}\n規格: {item['尺寸顯示']} mm {item['形狀']}\n\n庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
+            st.info(f"**{item['名稱']}** | 庫存: {item['庫存(顆)']} | 成本: ${item['單顆成本']:.1f}")
             
             is_restock = st.checkbox("我要對此商品進行「補貨」")
-            
             qty = st.number_input("數量", 1)
             
             if is_restock:
                 restock_price = st.number_input("補貨總價", 0)
                 restock_supplier = st.selectbox("補貨廠商", SUPPLIERS)
-                
                 if st.button("🔄 確認補貨", type="secondary"):
                     idx = df.index[df['編號'] == item['編號']].tolist()[0]
-                    
                     old_stock = df.at[idx, '庫存(顆)']
                     old_cost = df.at[idx, '單顆成本']
-                    
                     new_total_val = (old_stock * old_cost) + restock_price
                     new_total_qty = old_stock + qty
                     new_avg_cost = new_total_val / new_total_qty if new_total_qty > 0 else 0
-                    
                     df.at[idx, '庫存(顆)'] = new_total_qty
                     df.at[idx, '單顆成本'] = new_avg_cost
                     df.at[idx, '進貨廠商'] = restock_supplier
                     st.session_state['inventory'] = df
-                    
                     hist_entry = {
                         '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
                         '動作': '舊品補貨', '編號': item['編號'], '分類': item['分類'], '名稱': item['名稱'],
@@ -475,96 +472,65 @@ elif page == "🧮 設計與成本計算":
                     }
                     clean_hist = {k: v for k, v in hist_entry.items() if k in HISTORY_COLUMNS}
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([clean_hist])], ignore_index=True)
-                    
-                    st.success("補貨完成！")
-                    st.rerun()
+                    st.success("補貨完成！"); st.rerun()
             else:
                 if st.button("⬇️ 加入設計圖", type="primary"):
                     new_entry = {
-                        '編號': str(item['編號']),
-                        '分類': str(item['分類']),
-                        '名稱': str(item['名稱']),
+                        '編號': str(item['編號']), '分類': str(item['分類']), '名稱': str(item['名稱']),
                         '規格': f"{item['尺寸顯示']}mm {item['形狀']}",
-                        '使用數量': int(qty),
-                        '單價': float(item['單顆成本']),
+                        '使用數量': int(qty), '單價': float(item['單顆成本']),
                         '小計': float(item['單顆成本']) * int(qty)
                     }
                     st.session_state['current_design'].append(new_entry)
-                    st.success("已加入！")
-                    st.rerun()
-        else:
-            if selected_cat == "全部":
-                st.warning("庫存無資料，請先新增")
-            else:
-                st.warning(f"沒有「{selected_cat}」類別的材料")
+                    st.success("已加入！"); st.rerun()
+        else: st.warning("無資料")
 
     with col2:
         st.subheader("2. 設計清單")
-        
         design_data = st.session_state['current_design']
-        
         if len(design_data) > 0:
             design_df = pd.DataFrame(design_data)
-            
-            st.dataframe(
-                design_df,
-                use_container_width=True,
-                hide_index=True,
-                column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"),
-                column_config={
-                    "單價": st.column_config.NumberColumn(format="$%.1f"),
-                    "小計": st.column_config.NumberColumn(format="$%.1f"),
-                }
-            )
+            st.dataframe(design_df, use_container_width=True, hide_index=True, column_order=("分類", "名稱", "規格", "使用數量", "單價", "小計"))
             
             total = design_df['小計'].sum()
-            
             st.divider()
             c_labor, c_other = st.columns(2)
             labor = c_labor.number_input("工資", 0)
             other = c_other.number_input("雜支", 0)
-            
             final_total = total + labor + other
-            st.metric("總成本", f"NT$ {final_total:.1f}")
+            st.metric("總成本 (含工資雜支)", f"NT$ {final_total:.1f}")
             
             col_action1, col_action2 = st.columns(2)
-            
             with col_action1:
-                # ★★★ 修改重點：確認售出並寫入紀錄 ★★★
+                # ★★★ 確認售出並產生訂單 ★★★
                 if st.button("✅ 確認售出 (扣除庫存並記帳)", type="primary", use_container_width=True):
                     inv_df = st.session_state['inventory']
                     all_success = True
                     sales_logs = []
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    
+                    # 產生訂單編號
+                    new_order_id = generate_order_id(st.session_state['sales_history'])
 
-                    # 1. 檢查庫存是否足夠
                     for row in design_data:
                         target_id = row['編號']
                         use_qty = row['使用數量']
                         idx_list = inv_df.index[inv_df['編號'].astype(str) == target_id].tolist()
-                        
                         if idx_list:
                             idx = idx_list[0]
                             if inv_df.at[idx, '庫存(顆)'] < use_qty:
-                                st.error(f"庫存不足：{row['名稱']} (剩餘 {inv_df.at[idx, '庫存(顆)']})")
-                                all_success = False
-                        else:
-                            st.error(f"找不到編號 {target_id}")
-                            all_success = False
+                                st.error(f"庫存不足：{row['名稱']}"); all_success = False
+                        else: st.error(f"找不到編號 {target_id}"); all_success = False
                     
-                    # 2. 執行扣除與記帳
                     if all_success:
                         for row in design_data:
                             target_id = row['編號']
                             use_qty = row['使用數量']
                             idx = inv_df.index[inv_df['編號'].astype(str) == target_id].tolist()[0]
+                            inv_df.at[idx, '庫存(顆)'] -= use_qty
                             
-                            # 扣庫存
-                            current_stock = inv_df.at[idx, '庫存(顆)']
-                            inv_df.at[idx, '庫存(顆)'] = current_stock - use_qty
-                            
-                            # 準備銷售紀錄
                             sales_logs.append({
+                                '訂單編號': new_order_id, # 加入訂單號
                                 '銷售時間': now_str,
                                 '編號': target_id,
                                 '分類': row['分類'],
@@ -572,29 +538,24 @@ elif page == "🧮 設計與成本計算":
                                 '規格': row['規格'],
                                 '售出數量': use_qty,
                                 '成本單價': row['單價'],
-                                '售出小計': row['小計']
+                                '售出小計': row['小計'],
+                                '工資': labor,        # 紀錄工資
+                                '雜支': other,        # 紀錄雜支
+                                '訂單總金額': final_total # 紀錄這筆單的總價
                             })
                         
-                        # 更新 Session
                         st.session_state['inventory'] = inv_df
-                        st.session_state['sales_history'] = pd.concat(
-                            [st.session_state['sales_history'], pd.DataFrame(sales_logs)], 
-                            ignore_index=True
-                        )
-                        st.session_state['current_design'] = [] # 清空購物車
-                        
-                        st.toast("🎉 售出成功！庫存已扣除，紀錄已儲存。", icon="✅")
+                        st.session_state['sales_history'] = pd.concat([st.session_state['sales_history'], pd.DataFrame(sales_logs)], ignore_index=True)
+                        st.session_state['current_design'] = []
+                        st.toast(f"售出成功！訂單號：{new_order_id}", icon="✅")
                         st.rerun()
 
             with col2:
                 if st.button("🗑️ 清空重算", type="secondary", use_container_width=True):
-                    st.session_state['current_design'] = []
-                    st.rerun()
-                
-            txt = f"【報價單】總計 ${final_total:.0f}\n"
-            for _, row in design_df.iterrows():
-                txt += f"- [{row['分類']}] {row['名稱']} ({row['規格']}) x{row['使用數量']}\n"
-            st.text_area("複製文字", txt)
+                    st.session_state['current_design'] = []; st.rerun()
             
-        else:
-            st.info("👈 清單是空的，請先加入材料")
+            txt = f"【訂單 {datetime.now().strftime('%Y%m%d')}】\n"
+            for _, row in design_df.iterrows(): txt += f"- {row['名称']} x{row['使用数量']}\n"
+            txt += f"總計: {final_total}"
+            # st.text_area("複製", txt)
+        else: st.info("👈 清單是空的")
