@@ -227,7 +227,6 @@ with st.sidebar:
 if page == "📦 庫存管理與進貨":
     st.subheader("📦 庫存管理")
     
-    # 新增第三個 Tab: 修改/刪除
     tab_restock, tab_new, tab_edit = st.tabs(["🔄 已有商品補貨", "✨ 建立新商品", "🛠️ 修改/刪除商品"])
 
     # === Tab 1: 舊品補貨 ===
@@ -255,9 +254,7 @@ if page == "📦 庫存管理與進貨":
                 except: def_idx = 0
                 restock_supplier_sel = st.selectbox("廠商", supplier_opts, index=def_idx)
                 
-                final_restock_supplier = restock_supplier_sel
-                if restock_supplier_sel == "➕ 手動輸入新資料":
-                    final_restock_supplier = st.text_input("↳ 輸入新廠商名稱")
+                final_restock_supplier = st.text_input("↳ 輸入新廠商名稱") if restock_supplier_sel == "➕ 手動輸入新資料" else restock_supplier_sel
 
                 if st.form_submit_button("📦 確認補貨"):
                     if not final_restock_supplier:
@@ -397,7 +394,7 @@ if page == "📦 庫存管理與進貨":
                     st.success(f"✅ 已新增：{final_name} - {new_id}")
                     st.rerun()
 
-    # === Tab 3: 修改/刪除商品 (新增功能) ===
+    # === Tab 3: 修改/刪除商品 ===
     with tab_edit:
         st.markdown("##### 🛠️ 修正商品資料或刪除")
         if not st.session_state['inventory'].empty:
@@ -405,57 +402,43 @@ if page == "📦 庫存管理與進貨":
             edit_df['label'] = edit_df.apply(make_inventory_label, axis=1)
             
             selected_edit_label = st.selectbox("🔍 選擇要修改/刪除的商品", edit_df['label'].tolist())
-            
-            # 取得原始資料
             original_row = edit_df[edit_df['label'] == selected_edit_label].iloc[0]
             original_idx = st.session_state['inventory'][st.session_state['inventory']['編號'] == original_row['編號']].index[0]
 
             with st.form("edit_item_form"):
-                st.info(f"正在編輯：{original_row['編號']} (ID 無法修改，若 ID 錯誤請刪除重建立)")
-                
+                st.info(f"正在編輯：{original_row['編號']}")
                 ec1, ec2, ec3 = st.columns(3)
-                with ec1: 
-                    edit_name = st.text_input("名稱", value=original_row['名稱'])
-                with ec2:
-                    edit_width = st.number_input("寬度mm", value=float(original_row['寬度mm']), step=0.1)
-                with ec3:
-                    edit_length = st.number_input("長度mm", value=float(original_row['長度mm']), step=0.1)
+                with ec1: edit_name = st.text_input("名稱", value=original_row['名稱'])
+                with ec2: edit_width = st.number_input("寬度mm", value=float(original_row['寬度mm']), step=0.1)
+                with ec3: edit_length = st.number_input("長度mm", value=float(original_row['長度mm']), step=0.1)
 
-                # 使用動態選單，並預選當前值
                 shape_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
                 element_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
                 supplier_opts = get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS)
-
-                def get_edit_index(opts, val):
+                
+                def get_edit_idx(opts, val):
                     try: return opts.index(val)
                     except: return 0
 
                 ec4, ec5, ec6 = st.columns(3)
-                with ec4: 
-                    e_shape_sel = st.selectbox("形狀", shape_opts, index=get_edit_index(shape_opts, original_row['形狀']))
-                with ec5: 
-                    e_element_sel = st.selectbox("五行", element_opts, index=get_edit_index(element_opts, original_row['五行']))
-                with ec6: 
-                    e_supplier_sel = st.selectbox("廠商", supplier_opts, index=get_edit_index(supplier_opts, original_row['進貨廠商']))
+                with ec4: e_shape_sel = st.selectbox("形狀", shape_opts, index=get_edit_idx(shape_opts, original_row['形狀']))
+                with ec5: e_element_sel = st.selectbox("五行", element_opts, index=get_edit_idx(element_opts, original_row['五行']))
+                with ec6: e_supplier_sel = st.selectbox("廠商", supplier_opts, index=get_edit_idx(supplier_opts, original_row['進貨廠商']))
 
-                # 手動輸入處理
                 em_cols = st.columns(3)
                 edit_shape = em_cols[0].text_input("↳ 新形狀", value="") if e_shape_sel == "➕ 手動輸入新資料" else e_shape_sel
                 edit_element = em_cols[1].text_input("↳ 新五行", value="") if e_element_sel == "➕ 手動輸入新資料" else e_element_sel
                 edit_supplier = em_cols[2].text_input("↳ 新廠商", value="") if e_supplier_sel == "➕ 手動輸入新資料" else e_supplier_sel
 
                 st.divider()
-                st.caption("⚠️ 庫存數量與成本修正 (通常在盤點錯誤時使用)")
+                st.caption("⚠️ 庫存數量與成本修正")
                 ec7, ec8 = st.columns(2)
-                with ec7:
-                    edit_stock = st.number_input("庫存數量", value=int(original_row['庫存(顆)']), step=1)
-                with ec8:
-                    edit_cost = st.number_input("單顆成本", value=float(original_row['單顆成本']), step=0.1, format="%.2f")
+                with ec7: edit_stock = st.number_input("庫存數量", value=int(original_row['庫存(顆)']), step=1)
+                with ec8: edit_cost = st.number_input("單顆成本", value=float(original_row['單顆成本']), step=0.1, format="%.2f")
 
                 col_update, col_delete = st.columns([1, 1])
                 with col_update:
                     if st.form_submit_button("💾 儲存修改"):
-                        # 更新 Session State
                         st.session_state['inventory'].at[original_idx, '名稱'] = edit_name
                         st.session_state['inventory'].at[original_idx, '寬度mm'] = edit_width
                         st.session_state['inventory'].at[original_idx, '長度mm'] = edit_length
@@ -465,10 +448,8 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[original_idx, '庫存(顆)'] = edit_stock
                         st.session_state['inventory'].at[original_idx, '單顆成本'] = edit_cost
                         
-                        # 紀錄修改歷史
                         history_entry = {
-                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            '動作': '修改資料',
+                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '動作': '修改資料',
                             '編號': original_row['編號'], '分類': original_row['分類'], '名稱': edit_name,
                             '寬度mm': edit_width, '長度mm': edit_length, '形狀': edit_shape,
                             '廠商': edit_supplier, '進貨數量': 0, '進貨總價': 0, '單價': edit_cost
@@ -506,16 +487,7 @@ if page == "📦 庫存管理與進貨":
             df_display['名稱'].astype(str).str.contains(search_term, case=False) |
             df_display['編號'].astype(str).str.contains(search_term, case=False)
         ]
-    
-    st.dataframe(
-        df_display, use_container_width=True, height=400,
-        column_config={
-            "進貨總價": st.column_config.NumberColumn(format="$%d"),
-            "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
-            "寬度mm": st.column_config.NumberColumn(format="%.1f"),
-            "長度mm": st.column_config.NumberColumn(format="%.1f"),
-        }
-    )
+    st.dataframe(df_display, use_container_width=True, height=400, column_config={"進貨總價": st.column_config.NumberColumn(format="$%d"), "單顆成本": st.column_config.NumberColumn(format="$%.2f"), "寬度mm": st.column_config.NumberColumn(format="%.1f"), "長度mm": st.column_config.NumberColumn(format="%.1f")})
 
 # ------------------------------------------
 # 頁面 B: 進貨紀錄
@@ -573,24 +545,53 @@ elif page == "🧮 設計與成本計算":
             st.divider()
             st.markdown("##### 📝 目前設計清單")
             
+            # ★★★ 修改重點：將 DataFrame 改為手動繪製的清單，並加入刪除按鈕 ★★★
             if st.session_state['current_design']:
-                design_df = pd.DataFrame(st.session_state['current_design'])
-                st.dataframe(design_df, use_container_width=True, 
-                    column_config={
-                        "單價": st.column_config.NumberColumn(format="$%.1f"), 
-                        "小計": st.column_config.NumberColumn(format="$%.1f"), 
-                        "數量": st.column_config.NumberColumn(format="%d 顆")
-                    }
-                )
+                # 表頭
+                h1, h2, h3, h4, h5, h6 = st.columns([1, 2, 2, 1.5, 1, 0.8])
+                h1.markdown("**編號**")
+                h2.markdown("**名稱**")
+                h3.markdown("**規格**")
+                h4.markdown("**單價**")
+                h5.markdown("**數量**")
+                h6.markdown("**移除**")
+                st.divider()
+
+                # 內容
+                design_list = st.session_state['current_design']
+                rows_to_delete = []
                 
-                material_cost = design_df['小計'].sum()
+                total_material_cost = 0
+
+                for i, item in enumerate(design_list):
+                    c1, c2, c3, c4, c5, c6 = st.columns([1, 2, 2, 1.5, 1, 0.8])
+                    with c1: st.write(item['編號'])
+                    with c2: st.write(f"{item['名稱']} ({item['分類']})")
+                    with c3: st.write(f"{item['形狀']} {item['規格']}")
+                    with c4: st.write(f"${item['單價']:.1f}")
+                    with c5: st.write(f"{item['數量']}")
+                    with c6:
+                        if st.button("🗑️", key=f"del_design_{i}"):
+                            rows_to_delete.append(i)
+                    
+                    total_material_cost += item['小計']
+
+                # 執行刪除
+                if rows_to_delete:
+                    for i in sorted(rows_to_delete, reverse=True):
+                        del st.session_state['current_design'][i]
+                    st.rerun()
+
+                st.divider()
                 st.markdown("##### 💰 額外成本 (工資/雜支)")
                 c_labor, c_misc = st.columns(2)
                 with c_labor: labor_cost = st.number_input("工資 ($)", min_value=0, value=0, step=10)
                 with c_misc: misc_cost = st.number_input("雜支/包材/運費 ($)", min_value=0, value=0, step=5)
 
-                final_total_cost = material_cost + labor_cost + misc_cost
-                total_qty = design_df['數量'].sum()
+                final_total_cost = total_material_cost + labor_cost + misc_cost
+                total_qty = sum(item['數量'] for item in design_list)
+                
+                st.success(f"💎 材料費小計: ${total_material_cost:.1f}")
                 
                 st.divider()
                 m1, m2, m3, m4 = st.columns(4)
@@ -599,7 +600,7 @@ elif page == "🧮 設計與成本計算":
                 m3.metric("建議售價 (x3)", f"${final_total_cost * 3:.0f}")
                 m4.metric("建議售價 (x5)", f"${final_total_cost * 5:.0f}")
                 
-                if st.button("🗑️ 清空設計清單", type="secondary"):
+                if st.button("🗑️ 清空所有清單", type="secondary"):
                     st.session_state['current_design'] = []
                     st.rerun()
             else:
