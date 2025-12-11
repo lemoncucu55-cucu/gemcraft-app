@@ -146,7 +146,6 @@ def merge_inventory_duplicates(df):
         suffixes=('', '_base')
     )
     
-    # 最終欄位：庫存/成本/日期使用 agg 的，編號與廠商用 base 的
     if '進貨廠商_base' in merged.columns:
         merged['進貨廠商'] = merged['進貨廠商_base']
     if '編號_base' in merged.columns:
@@ -154,7 +153,6 @@ def merge_inventory_duplicates(df):
         
     merged = merged[[c for c in merged.columns if not c.endswith('_base')]]
     
-    # 補上缺欄位並排序
     for col in COLUMNS:
         if col not in merged.columns:
             merged[col] = 0 if (
@@ -193,8 +191,8 @@ def make_inventory_label(row: pd.Series) -> str:
     return f"{row['編號']} | {row['名稱']} ({row['寬度mm']}x{row['長度mm']}mm) | 存:{row['庫存(顆)']}"
 
 
-# ★★★ 修改處：在顯示標籤中加入形狀 ★★★
 def make_design_label(row: pd.Series) -> str:
+    # 顯示形狀在選單中
     return (
         f"【{row['五行']}】 {row['名稱']} | {row['形狀']} "
         f"({row['寬度mm']}x{row['長度mm']}mm) | ${row['單顆成本']:.1f}/顆 | 存:{row['庫存(顆)']}"
@@ -303,7 +301,6 @@ with st.sidebar:
 if page == "📦 庫存管理與進貨":
     st.subheader("📦 庫存管理")
     
-    # 使用 Tabs 分開「補貨」與「新增」
     tab_restock, tab_new = st.tabs(["🔄 已有商品補貨", "✨ 建立新商品"])
 
     # === Tab 1: 舊品補貨 (Restock) ===
@@ -428,7 +425,6 @@ if page == "📦 庫存管理與進貨":
                 if final_length == 0.0 and final_width > 0:
                     st.caption(f"預設為 {final_width}")
 
-        # 嘗試讀取同分類同名稱的前一筆資料，預設帶入形狀、五行、廠商
         prev_row = None
         if final_name and not inventory_df.empty:
             same_name_df = inventory_df[
@@ -517,7 +513,6 @@ if page == "📦 庫存管理與進貨":
 
     st.divider()
     
-    # 庫存列表
     col_op1, col_op2 = st.columns([3, 1])
     with col_op1:
         st.markdown("### 📋 庫存總表")
@@ -568,7 +563,7 @@ elif page == "📜 進貨紀錄查詢":
     st.dataframe(st.session_state['history'], use_container_width=True)
 
 # ------------------------------------------
-# 頁面 C: 設計與成本計算
+# 頁面 C: 設計與成本計算 (加入工資與雜支)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 手鍊設計成本試算")
@@ -577,7 +572,6 @@ elif page == "🧮 設計與成本計算":
 
     if not all_items.empty:
         
-        # 1. 五行複選篩選
         unique_elements = sorted(all_items['五行'].astype(str).unique().tolist())
         
         st.write("👇 **第一步：選擇五行屬性（可複選）**")
@@ -623,7 +617,7 @@ elif page == "🧮 設計與成本計算":
                         '編號': selected_row['編號'],
                         '分類': selected_row['五行'], 
                         '名稱': selected_row['名稱'],
-                        '形狀': selected_row['形狀'], # 新增：記錄形狀
+                        '形狀': selected_row['形狀'],
                         '規格': f"{selected_row['寬度mm']}x{selected_row['長度mm']}",
                         '單價': selected_row['單顆成本'],
                         '數量': input_qty,
@@ -632,7 +626,6 @@ elif page == "🧮 設計與成本計算":
                     
                     st.success(f"已加入 {input_qty} 顆 {selected_row['名稱']}")
 
-            # 4. 設計清單與統計
             st.divider()
             st.markdown("##### 📝 目前設計清單")
             
@@ -648,14 +641,28 @@ elif page == "🧮 設計與成本計算":
                     }
                 )
                 
-                total_cost = design_df['小計'].sum()
+                # 計算材料費
+                material_cost = design_df['小計'].sum()
+                
+                # ★★★ 新增：額外成本輸入區 ★★★
+                st.markdown("##### 💰 額外成本 (工資/雜支)")
+                c_labor, c_misc = st.columns(2)
+                with c_labor:
+                    labor_cost = st.number_input("工資 ($)", min_value=0, value=0, step=10, help="手工製作費用")
+                with c_misc:
+                    misc_cost = st.number_input("雜支/包材/運費 ($)", min_value=0, value=0, step=5, help="包裝材料或其他雜項")
+
+                # 計算最終總成本
+                final_total_cost = material_cost + labor_cost + misc_cost
                 total_qty = design_df['數量'].sum()
                 
+                # 顯示結果
+                st.divider()
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總顆數", f"{total_qty} 顆")
-                m2.metric("總成本", f"${total_cost:.1f}")
-                m3.metric("建議售價 (x3)", f"${total_cost * 3:.0f}")
-                m4.metric("建議售價 (x5)", f"${total_cost * 5:.0f}")
+                m2.metric("總成本 (含工雜)", f"${final_total_cost:.1f}")
+                m3.metric("建議售價 (x3)", f"${final_total_cost * 3:.0f}")
+                m4.metric("建議售價 (x5)", f"${final_total_cost * 5:.0f}")
                 
                 if st.button("🗑️ 清空設計清單", type="secondary"):
                     st.session_state['current_design'] = []
