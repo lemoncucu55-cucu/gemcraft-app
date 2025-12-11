@@ -101,7 +101,7 @@ def normalize_columns(df):
         '单颗成本': '單顆成本', 'Cost': '單顆成本', '成本': '單顆成本',
         '进货厂商': '進貨廠商', 'Supplier': '進貨廠商', '厂商': '進貨廠商',
         '进货日期': '進貨日期', 'Date': '進貨日期', '日期': '進貨日期',
-        '进货总价': '進貨總價', 'Total Price': '進貨總價',
+        '进货總價': '進貨總價', 'Total Price': '進貨總價',
         '进货数量(颗)': '進貨數量(顆)', 'Qty': '進貨數量(顆)'
     }
     df = df.rename(columns=rename_map)
@@ -382,7 +382,7 @@ elif page == "📜 進貨紀錄查詢":
     st.dataframe(st.session_state['history'], use_container_width=True)
 
 # ------------------------------------------
-# 頁面 C: 設計與成本 (修正排序：五行優先)
+# 頁面 C: 設計與成本 (含五行篩選與數量輸入)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 手鍊設計成本試算")
@@ -411,33 +411,43 @@ elif page == "🧮 設計與成本計算":
 
         st.divider()
 
-        # --- 3. 下拉選單 ---
+        # --- 3. 選擇珠子與數量 ---
         if not filtered_items.empty:
             filtered_items['display_label'] = filtered_items.apply(
                 lambda x: f"【{x['五行']}】 {x['名稱']} ({x['寬度mm']}x{x['長度mm']}mm) | ${x['單顆成本']:.1f}/顆 | 存:{x['庫存(顆)']}", 
                 axis=1
             )
             
-            c_sel, c_btn = st.columns([4, 1])
+            # 使用 3:1:1 的比例分配版面
+            c_sel, c_qty, c_btn = st.columns([3, 1, 1])
+            
             with c_sel:
                 selected_item_label = st.selectbox(
                     f"👇 選擇珠子 (目前顯示：{selected_element})", 
                     filtered_items['display_label'].tolist()
                 )
             
+            with c_qty:
+                input_qty = st.number_input("數量", min_value=1, value=1, step=1)
+            
             with c_btn:
                 st.write("") 
                 st.write("") 
-                if st.button("⬇️ 加入", use_container_width=True):
+                if st.button("⬇️ 加入清單", use_container_width=True, type="primary"):
                     selected_row = filtered_items[filtered_items['display_label'] == selected_item_label].iloc[0]
+                    
+                    subtotal = selected_row['單顆成本'] * input_qty
+                    
                     st.session_state['current_design'].append({
                         '編號': selected_row['編號'],
                         '分類': selected_row['五行'], 
                         '名稱': selected_row['名稱'],
                         '規格': f"{selected_row['寬度mm']}x{selected_row['長度mm']}",
-                        '成本': selected_row['單顆成本']
+                        '單價': selected_row['單顆成本'],
+                        '數量': input_qty,
+                        '小計': subtotal
                     })
-                    st.success(f"已加入 {selected_row['名稱']}")
+                    st.success(f"已加入 {input_qty} 顆 {selected_row['名稱']}")
         else:
             st.warning(f"⚠️ 找不到屬性為「{selected_element}」的庫存項目。")
 
@@ -447,13 +457,22 @@ elif page == "🧮 設計與成本計算":
     st.markdown("##### 📝 目前設計清單")
     if st.session_state['current_design']:
         design_df = pd.DataFrame(st.session_state['current_design'])
-        st.dataframe(design_df, use_container_width=True, column_config={"成本": st.column_config.NumberColumn(format="$%.1f")})
         
-        total_cost = design_df['成本'].sum()
-        count = len(design_df)
+        st.dataframe(
+            design_df, 
+            use_container_width=True, 
+            column_config={
+                "單價": st.column_config.NumberColumn(format="$%.1f"),
+                "小計": st.column_config.NumberColumn(format="$%.1f"),
+                "數量": st.column_config.NumberColumn(format="%d 顆"),
+            }
+        )
+        
+        total_cost = design_df['小計'].sum()
+        total_qty = design_df['數量'].sum()
         
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("總顆數", f"{count} 顆")
+        m1.metric("總顆數", f"{total_qty} 顆")
         m2.metric("總成本", f"${total_cost:.1f}")
         m3.metric("建議售價 (x3)", f"${total_cost * 3:.0f}")
         m4.metric("建議售價 (x5)", f"${total_cost * 5:.0f}")
