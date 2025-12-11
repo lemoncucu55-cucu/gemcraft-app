@@ -311,4 +311,141 @@ if page == "📦 庫存管理與進貨":
 
         if submitted:
             if not final_name:
-                st
+                st.error("❌ 請確認名稱已填寫！")
+            else:
+                # 若長度未填，如果是圓珠則假設與寬度相同，否則為0
+                save_length = final_length if final_length > 0 else (final_width if new_shape in ['圓珠', '鑽切'] else 0.0)
+                
+                new_id = generate_new_id(new_cat, st.session_state['inventory'])
+                unit_cost = new_price / new_qty if new_qty > 0 else 0
+                
+                # 建立新資料行 (符合新順序)
+                new_row = {
+                    '編號': new_id, '分類': new_cat, '名稱': final_name, 
+                    '寬度mm': final_width, '長度mm': save_length,
+                    '形狀': new_shape, '五行': new_element, 
+                    '進貨總價': new_price, '進貨數量(顆)': new_qty, 
+                    '進貨日期': new_date, '進貨廠商': new_supplier,
+                    '庫存(顆)': new_qty, '單顆成本': unit_cost
+                }
+                
+                new_row_df = pd.DataFrame([new_row])
+                st.session_state['inventory'] = pd.concat([st.session_state['inventory'], new_row_df], ignore_index=True)
+                
+                # 記錄到歷史
+                history_entry = {
+                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    '動作': '進貨',
+                    '編號': new_id, '分類': new_cat, '名稱': final_name,
+                    '寬度mm': final_width, '長度mm': save_length, '形狀': new_shape,
+                    '廠商': new_supplier, '進貨數量': new_qty, 
+                    '進貨總價': new_price, '單價': unit_cost
+                }
+                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([history_entry])], ignore_index=True)
+                
+                st.success(f"✅ 已新增：{final_name} ({final_width}x{save_length}mm) - 編號 {new_id}")
+                st.rerun()
+
+    st.divider()
+    
+    # --- 庫存列表與編輯 ---
+    col_op1, col_op2 = st.columns([3, 1])
+    with col_op1:
+        st.markdown("### 📋 庫存總表")
+    with col_op2:
+        if st.button("🔄 合併重複項目 (同規格)"):
+            merged_df, count = merge_inventory_duplicates(st.session_state['inventory'])
+            st.session_state['inventory'] = merged_df
+            st.success(f"已合併 {count} 筆重複資料！")
+            st.rerun()
+
+    # 搜尋過濾
+    search_term = st.text_input("🔍 搜尋庫存 (名稱/編號/廠商)", "")
+    
+    df_display = st.session_state['inventory'].copy()
+    if search_term:
+        df_display = df_display[
+            df_display['名稱'].astype(str).str.contains(search_term, case=False) |
+            df_display['編號'].astype(str).str.contains(search_term, case=False) |
+            df_display['進貨廠商'].astype(str).str.contains(search_term, case=False)
+        ]
+    
+    # 按照順序顯示，格式化數字
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        column_config={
+            "進貨總價": st.column_config.NumberColumn(format="$%d"),
+            "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
+            "寬度mm": st.column_config.NumberColumn(format="%.1f"),
+            "長度mm": st.column_config.NumberColumn(format="%.1f"),
+        },
+        height=400
+    )
+    
+    # 刪除功能
+    with st.expander("🗑️ 刪除特定庫存"):
+        del_id = st.text_input("輸入要刪除的編號 (例如 ST0001)")
+        if st.button("確認刪除"):
+            if del_id in st.session_state['inventory']['編號'].values:
+                st.session_state['inventory'] = st.session_state['inventory'][st.session_state['inventory']['編號'] != del_id]
+                st.success(f"已刪除 {del_id}")
+                st.rerun()
+            else:
+                st.error("找不到此編號")
+
+# ------------------------------------------
+# 頁面 B: 進貨紀錄
+# ------------------------------------------
+elif page == "📜 進貨紀錄查詢":
+    st.subheader("📜 進貨與異動紀錄")
+    st.dataframe(st.session_state['history'], use_container_width=True)
+
+# ------------------------------------------
+# 頁面 C: 設計與成本
+# ------------------------------------------
+elif page == "🧮 設計與成本計算":
+    st.subheader("🧮 手鍊設計成本試算")
+
+    # 選擇加入設計的珠子
+    all_items = st.session_state['inventory'].copy()
+    if not all_items.empty:
+        # 建立顯示標籤
+        all_items['display_label'] = all_items.apply(
+            lambda x: f"{x['編號']} | {x['名稱']} ({x['寬度mm']}x{x['長度mm']}mm) | ${x['單顆成本']:.1f}/顆 | 存:{x['庫存(顆)']}", axis=1
+        )
+        
+        selected_item_label = st.selectbox("選擇加入珠子/配件", all_items['display_label'].tolist())
+        
+        if st.button("⬇️ 加入清單"):
+            # 找出選中的項目
+            selected_row = all_items[all_items['display_label'] == selected_item_label].iloc[0]
+            st.session_state['current_design'].append({
+                '編號': selected_row['編號'],
+                '名稱': selected_row['名稱'],
+                '規格': f"{selected_row['寬度mm']}x{selected_row['長度mm']}",
+                '成本': selected_row['單顆成本']
+            })
+            st.success("已加入！")
+
+    st.divider()
+    
+    # 顯示目前設計清單
+    st.markdown("##### 📝 目前設計清單")
+    if st.session_state['current_design']:
+        design_df = pd.DataFrame(st.session_state['current_design'])
+        st.table(design_df)
+        
+        total_cost = design_df['成本'].sum()
+        count = len(design_df)
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("總顆數", f"{count} 顆")
+        c2.metric("總成本", f"${total_cost:.1f}")
+        c3.metric("建議售價 (x3)", f"${total_cost * 3:.0f}")
+        
+        if st.button("🗑️ 清空設計清單"):
+            st.session_state['current_design'] = []
+            st.rerun()
+    else:
+        st.info("尚未加入任何配件")
