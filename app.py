@@ -14,7 +14,7 @@ COLUMNS = [
     '進貨總價', '進貨數量(顆)', '進貨日期', '進貨廠商', '庫存(顆)', '單顆成本'
 ]
 
-# ★★★ 修改：歷史紀錄增加「單號」欄位 ★★★
+# 歷史紀錄欄位 (含單號)
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '編號', '分類', '名稱', '寬度mm', '長度mm', '形狀', 
     '廠商', '進貨數量', '進貨總價', '單價'
@@ -154,7 +154,6 @@ if 'inventory' not in st.session_state:
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
 else:
-    # 檢查是否缺「單號」欄位 (舊資料相容)
     if '單號' not in st.session_state['history'].columns:
         st.session_state['history'].insert(1, '單號', '')
 
@@ -235,9 +234,8 @@ if page == "📦 庫存管理與進貨":
             target_row = restock_df[restock_df['label'] == selected_restock_label].iloc[0]
             
             with st.form("restock_form"):
-                # ★★★ 新增：進貨單號 ★★★
                 st.markdown("**進貨資訊**")
-                batch_id = st.text_input("進貨單號 (留空則自動以時間產生)", placeholder="例如：IN-20241211-01")
+                batch_id = st.text_input("進貨單號 (留空則自動產生)", placeholder="例如：IN-20241211-01")
 
                 c1, c2, c3 = st.columns(3)
                 with c1: qty = st.number_input("補貨數量 (顆)", min_value=1, value=10)
@@ -255,7 +253,6 @@ if page == "📦 庫存管理與進貨":
                     if not final_sup:
                         st.error("請輸入廠商名稱")
                     else:
-                        # 自動產生單號
                         if not batch_id:
                             batch_id = f"IN-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
@@ -274,8 +271,7 @@ if page == "📦 庫存管理與進貨":
                         
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': batch_id,
-                            '動作': '補貨',
+                            '單號': batch_id, '動作': '補貨',
                             '編號': target_row['編號'], '分類': target_row['分類'], '名稱': target_row['名稱'],
                             '寬度mm': target_row['寬度mm'], '長度mm': target_row['長度mm'], '形狀': target_row['形狀'],
                             '廠商': final_sup, '進貨數量': qty, '進貨總價': price, '單價': new_unit_cost
@@ -327,8 +323,7 @@ if page == "📦 庫存管理與進貨":
 
         with st.form("add_new"):
             st.markdown("##### 3. 詳細資訊")
-            # ★★★ 新增：進貨單號 ★★★
-            batch_id_new = st.text_input("進貨單號 (留空則自動以時間產生)", placeholder="例如：IN-20241211-01")
+            batch_id_new = st.text_input("進貨單號 (留空則自動產生)", placeholder="例如：IN-20241211-01")
 
             shape_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
             elem_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
@@ -380,8 +375,7 @@ if page == "📦 庫存管理與進貨":
                     
                     log = {
                         '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                        '單號': batch_id_new,
-                        '動作': '進貨',
+                        '單號': batch_id_new, '動作': '進貨',
                         '編號': new_id, '分類': new_cat, '名稱': final_name,
                         '寬度mm': final_w, '長度mm': save_l, '形狀': final_shape,
                         '廠商': final_sup, '進貨數量': qty, '進貨總價': price, '單價': unit_cost
@@ -447,8 +441,7 @@ if page == "📦 庫存管理與進貨":
                         
                         log = {
                             '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': 'EDIT',
-                            '動作': '修改資料',
+                            '單號': 'EDIT', '動作': '修改資料',
                             '編號': orig_row['編號'], '分類': orig_row['分類'], '名稱': ename,
                             '寬度mm': ewidth, '長度mm': elength, '形狀': eshape,
                             '廠商': esup, '進貨數量': 0, '進貨總價': 0, '單價': ecost
@@ -501,7 +494,6 @@ if page == "📦 庫存管理與進貨":
 # ------------------------------------------
 elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 進貨與異動紀錄")
-    # 將單號欄位顯示在前面
     cols = st.session_state['history'].columns.tolist()
     if '單號' in cols:
         cols.remove('單號')
@@ -596,20 +588,20 @@ elif page == "🧮 設計與成本計算":
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總顆數", f"{tot_qty} 顆")
                 m2.metric("總成本", f"${final_cost:.1f}")
+                # ★★★ 修改：改為 x3 和 x4 ★★★
                 m3.metric("建議售價 (x3)", f"${final_cost * 3:.0f}")
-                m4.metric("建議售價 (x5)", f"${final_cost * 5:.0f}")
+                m4.metric("建議售價 (x4)", f"${final_cost * 4:.0f}")
                 
                 st.divider()
                 act_c1, act_c2 = st.columns([3, 1])
                 
                 with act_c1:
-                    st.caption(f"💡 參考：批發價(x2) ${final_cost*2:.0f} | 零售價(x4) ${final_cost*4:.0f}")
-                    # ★★★ 新增：訂單編號輸入 ★★★
+                    # ★★★ 修改：補充說明為 x2 與 x5 ★★★
+                    st.caption(f"💡 參考：批發價(x2) ${final_cost*2:.0f} | 高利潤(x5) ${final_cost*5:.0f}")
                     sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：客戶名或蝦皮單號")
                 
                 with act_c2:
                     if st.button("✅ 確認售出 (扣庫存)", type="primary", use_container_width=True):
-                        # 自動產生銷售單號
                         if not sales_order_id:
                             sales_order_id = f"OUT-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
