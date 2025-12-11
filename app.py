@@ -579,59 +579,59 @@ elif page == "🧮 設計與成本計算":
     all_items = st.session_state['inventory']
 
     if not all_items.empty:
-        # 1. 五行篩選
-        unique_elements = sorted(all_items['五行'].astype(str).unique().tolist())
-        filter_options = ["全部"] + unique_elements
+       # 1. 五行複選篩選
+unique_elements = sorted(all_items['五行'].astype(str).unique().tolist())
 
-        st.write("👇 **第一步：選擇五行屬性**")
-        selected_element = st.radio(
-            "五行篩選", filter_options,
-            horizontal=True, label_visibility="collapsed"
+st.write("👇 **第一步：選擇五行屬性（可複選）**")
+selected_elements = st.multiselect(
+    "五行屬性",
+    options=unique_elements,
+    default=unique_elements,  # 預設全選
+)
+
+# 若全部未選，則自動視為全選
+if not selected_elements:
+    selected_elements = unique_elements
+
+# 2. 套用五行篩選
+filtered_items = all_items[all_items['五行'].isin(selected_elements)]
+filtered_items = filtered_items.sort_values(by=['五行', '名稱', '編號'])
+
+st.divider()
+
+# 3. 選擇珠子與數量
+if not filtered_items.empty:
+    temp_df = filtered_items.copy()
+    temp_df['display_label'] = temp_df.apply(make_design_label, axis=1)
+
+    selected_label_list = ", ".join(selected_elements)
+    c_sel, c_qty, c_btn = st.columns([3, 1, 1])
+
+    with c_sel:
+        selected_item_label = st.selectbox(
+            f"👇 選擇珠子（目前篩選：{selected_label_list}）",
+            temp_df['display_label'].tolist()
         )
-
-        # 2. 排序 (五行優先)
-        if selected_element == "全部":
-            filtered_items = all_items.sort_values(by=['五行', '名稱', '編號'])
-        else:
-            filtered_items = all_items[
-                all_items['五行'] == selected_element
-            ].sort_values(by=['名稱', '編號'])
-
-        st.divider()
-
-        # 3. 選擇珠子與數量
-        if not filtered_items.empty:
-            temp_df = filtered_items.copy()
-            temp_df['display_label'] = temp_df.apply(make_design_label, axis=1)
-
-            c_sel, c_qty, c_btn = st.columns([3, 1, 1])
-            with c_sel:
-                selected_item_label = st.selectbox(
-                    f"👇 選擇珠子 ({selected_element})",
-                    temp_df['display_label'].tolist()
-                )
-            with c_qty:
-                input_qty = st.number_input("數量", min_value=1, value=1, step=1)
-            with c_btn:
-                st.write("")
-                st.write("")
-                if st.button("⬇️ 加入清單", use_container_width=True, type="primary"):
-                    selected_row = temp_df[
-                        temp_df['display_label'] == selected_item_label
-                    ].iloc[0]
-                    subtotal = selected_row['單顆成本'] * input_qty
-                    st.session_state['current_design'].append({
-                        '編號': selected_row['編號'],
-                        '分類': selected_row['五行'],
-                        '名稱': selected_row['名稱'],
-                        '規格': f"{selected_row['寬度mm']}x{selected_row['長度mm']}",
-                        '單價': selected_row['單顆成本'],
-                        '數量': input_qty,
-                        '小計': subtotal
-                    })
-                    st.success(f"已加入 {input_qty} 顆 {selected_row['名稱']}")
-        else:
-            st.warning(f"⚠️ 找不到屬性為「{selected_element}」的庫存項目。")
+    with c_qty:
+        input_qty = st.number_input("數量", min_value=1, value=1, step=1)
+    with c_btn:
+        st.write("")
+        st.write("")
+        if st.button("⬇️ 加入清單", use_container_width=True, type="primary"):
+            selected_row = temp_df[temp_df['display_label'] == selected_item_label].iloc[0]
+            subtotal = selected_row['單顆成本'] * input_qty
+            st.session_state['current_design'].append({
+                '編號': selected_row['編號'],
+                '分類': selected_row['五行'],
+                '名稱': selected_row['名稱'],
+                '規格': f"{selected_row['寬度mm']}x{selected_row['長度mm']}",
+                '單價': selected_row['單顆成本'],
+                '數量': input_qty,
+                '小計': subtotal
+            })
+            st.success(f"已加入 {input_qty} 顆 {selected_row['名稱']}")
+else:
+    st.warning(f"⚠️ 找不到屬性為 {selected_elements} 的庫存項目。")
 
     st.divider()
 
