@@ -580,24 +580,30 @@ elif page == "🧮 設計與成本計算":
                 with lc: labor = st.number_input("工資 ($)", min_value=0, value=0, step=10)
                 with mc: misc = st.number_input("雜支/包材/運費 ($)", min_value=0, value=0, step=5)
 
-                final_cost = mat_cost + labor + misc
+                # ★★★ 新公式應用 ★★★
+                # 總成本 (含工雜) - 用於參考
+                total_cost_base = mat_cost + labor + misc
+                
+                # 建議售價公式
+                # x3 = (材料 * 3) + 工資 + 雜支
+                price_x3 = (mat_cost * 3) + labor + misc
+                # x5 = (材料 * 5) + 工資 + 雜支
+                price_x5 = (mat_cost * 5) + labor + misc
+                
                 tot_qty = sum(x['數量'] for x in design_list)
                 
                 st.info(f"💎 材料費: ${mat_cost:.1f} + 工資: ${labor} + 雜支: ${misc}")
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總顆數", f"{tot_qty} 顆")
-                m2.metric("總成本", f"${final_cost:.1f}")
-                # ★★★ 修改：改為 x3 和 x4 ★★★
-                m3.metric("建議售價 (x3)", f"${final_cost * 3:.0f}")
-                m4.metric("建議售價 (x4)", f"${final_cost * 4:.0f}")
+                m2.metric("總成本 (成本價)", f"${total_cost_base:.1f}")
+                m3.metric("建議售價 (材料x3+工雜)", f"${price_x3:.0f}")
+                m4.metric("建議售價 (材料x5+工雜)", f"${price_x5:.0f}")
                 
                 st.divider()
                 act_c1, act_c2 = st.columns([3, 1])
                 
                 with act_c1:
-                    # ★★★ 修改：補充說明為 x2 與 x5 ★★★
-                    st.caption(f"💡 參考：批發價(x2) ${final_cost*2:.0f} | 高利潤(x5) ${final_cost*5:.0f}")
                     sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：客戶名或蝦皮單號")
                 
                 with act_c2:
