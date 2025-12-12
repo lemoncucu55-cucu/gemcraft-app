@@ -129,13 +129,15 @@ def normalize_columns(df):
     }
     df = df.rename(columns=rename_map)
     
-    # 補齊
+    # 補齊所有系統需要的欄位
     for col in COLUMNS:
         if col not in df.columns:
             if 'mm' in col or '價' in col or '數量' in col or '成本' in col:
                 df[col] = 0
             else:
-                df[col] = ""
+                df[col] = "" # 補上空字串，防止 KeyError
+    
+    # 確保欄位順序一致
     return df[COLUMNS]
 
 def make_inventory_label(row):
@@ -160,18 +162,10 @@ if 'inventory' not in st.session_state:
     else:
         st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
-# ★★★ 關鍵修復：強制檢查 Session State 中的資料結構 ★★★
-# 這段程式碼會確保即使是舊的快取資料，也會擁有最新的 '尺寸規格' 等欄位
+# ★★★ 關鍵修復：每次執行都檢查一次欄位是否完整 ★★★
 if 'inventory' in st.session_state:
-    df_current = st.session_state['inventory']
-    missing_cols = set(COLUMNS) - set(df_current.columns)
-    if missing_cols:
-        for col in missing_cols:
-            if 'mm' in col or '價' in col or '數量' in col or '成本' in col:
-                df_current[col] = 0
-            else:
-                df_current[col] = ""
-        st.session_state['inventory'] = df_current[COLUMNS] # 重排順序
+    # 再次執行 normalize 確保 '尺寸規格' 等新欄位被補上
+    st.session_state['inventory'] = normalize_columns(st.session_state['inventory'])
 
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
