@@ -8,7 +8,7 @@ import time
 # 1. 核心邏輯與設定區
 # ==========================================
 
-# 系統標準欄位順序 (確保 '尺寸規格' 存在以修復 KeyError)
+# 系統標準欄位順序
 COLUMNS = [
     '編號', '分類', '系列', '名稱', '尺寸規格', # 識別欄位
     '寬度mm', '長度mm', '形狀', '五行',       # 實體規格
@@ -85,7 +85,7 @@ def load_coding_rules(uploaded_file=None):
             df = pd.read_excel(source, header=0)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # 依照您的 Excel 結構讀取 (A/B, C/D, E/F, G/H)
+            # 依照您的 Excel 結構讀取
             if df.shape[1] >= 2:
                 cat_df = df.iloc[:, [0, 1]].dropna().astype(str)
                 rules['cat'] = dict(zip(cat_df.iloc[:, 0], cat_df.iloc[:, 1]))
@@ -138,38 +138,28 @@ def normalize_columns(df):
                 df[col] = ""
     return df[COLUMNS]
 
-# 智慧型標籤顯示 (解決空括號問題)
+# 智慧型標籤顯示
 def get_display_size(row):
     """判斷要顯示文字規格，還是數字寬度"""
     size_spec = str(row.get('尺寸規格', '')).strip()
-    
-    # 如果尺寸規格有內容，且不是 '0' 或 'nan'，就直接用
     if size_spec and size_spec != '0' and size_spec.lower() != 'nan':
         return size_spec
-    
-    # 否則嘗試用寬度/長度組裝
     try:
         w = float(row.get('寬度mm', 0))
         l = float(row.get('長度mm', 0))
         if w > 0:
-            if l == 0 or l == w:
-                return f"{w}mm"
-            else:
-                return f"{w}x{l}mm"
-    except:
-        pass
-        
+            if l == 0 or l == w: return f"{w}mm"
+            else: return f"{w}x{l}mm"
+    except: pass
     return "規格未標示"
 
 def make_inventory_label(row):
     size_str = get_display_size(row)
     return f"{str(row['編號'])} | {str(row['名稱'])} ({size_str}) | 存:{row['庫存(顆)']}"
 
-# ★★★ 修改處：把【形狀】加回來選單顯示中 ★★★
 def make_design_label(row):
     size_str = get_display_size(row)
     shape_str = str(row.get('形狀', '')).strip()
-    # 格式：【五行】名稱 | 形狀 (規格) | 價格 | 庫存
     return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} ({size_str}) | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
 
 # ==========================================
@@ -287,7 +277,6 @@ elif page == "📦 庫存管理與進貨":
     with tab1:
         inv_df = st.session_state['inventory']
         if not inv_df.empty:
-            # 製作選單 (已修復 KeyError)
             inv_df['label'] = inv_df.apply(make_inventory_label, axis=1)
             target_label = st.selectbox("選擇商品", inv_df['label'].tolist())
             
@@ -502,6 +491,12 @@ elif page == "🧮 設計與成本計算":
             
             if st.session_state['current_design']:
                 df_design = pd.DataFrame(st.session_state['current_design'])
+                
+                # ★★★ 防呆補丁：確保欄位完整 ★★★
+                for col in ['名稱', '形狀', '規格', '單價', '數量', '小計']:
+                    if col not in df_design.columns:
+                        df_design[col] = "" if col == '形狀' else 0
+
                 st.table(df_design[['名稱', '形狀', '規格', '單價', '數量', '小計']])
                 
                 if st.button("🗑️ 清除最後一項"):
