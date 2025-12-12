@@ -455,13 +455,16 @@ if page == "📦 庫存管理與進貨":
             time.sleep(1)
             st.rerun()
 
-    search = st.text_input("🔍 搜尋庫存", "")
-    disp_df = st.session_state['inventory']
-    if search:
-        disp_df = disp_df[
-            disp_df['名稱'].astype(str).str.contains(search, case=False) |
-            disp_df['編號'].astype(str).str.contains(search, case=False)
-        ]
+   # (第 458 行)
+search = st.text_input("🔍 搜尋庫存", "")
+# (第 459 行)
+disp_df = st.session_state['inventory']
+# (第 460-464 行)
+if search:
+    disp_df = disp_df[
+        disp_df['名稱'].astype(str).str.contains(search, case=False) |
+        disp_df['編號'].astype(str).str.contains(search, case=False)
+    ]
     st.dataframe(disp_df, use_container_width=True, height=400,
                  column_config={
                      "進貨總價": st.column_config.NumberColumn(format="$%d"),
