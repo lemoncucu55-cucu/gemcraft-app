@@ -8,7 +8,7 @@ import time
 # 1. 核心邏輯與設定區
 # ==========================================
 
-# 系統標準欄位順序
+# 系統標準欄位順序 (確保 '尺寸規格' 存在以修復 KeyError)
 COLUMNS = [
     '編號', '分類', '系列', '名稱', '尺寸規格', # 識別欄位
     '寬度mm', '長度mm', '形狀', '五行',       # 實體規格
@@ -85,7 +85,7 @@ def load_coding_rules(uploaded_file=None):
             df = pd.read_excel(source, header=0)
             df.columns = [str(c).strip() for c in df.columns]
             
-            # 依照 Excel 結構讀取 (A/B, C/D, E/F, G/H)
+            # 依照您的 Excel 結構讀取 (A/B, C/D, E/F, G/H)
             if df.shape[1] >= 2:
                 cat_df = df.iloc[:, [0, 1]].dropna().astype(str)
                 rules['cat'] = dict(zip(cat_df.iloc[:, 0], cat_df.iloc[:, 1]))
@@ -138,7 +138,7 @@ def normalize_columns(df):
                 df[col] = ""
     return df[COLUMNS]
 
-# ★★★ 核心修改：智慧型標籤顯示 (解決空括號問題) ★★★
+# 智慧型標籤顯示 (解決空括號問題)
 def get_display_size(row):
     """判斷要顯示文字規格，還是數字寬度"""
     size_spec = str(row.get('尺寸規格', '')).strip()
@@ -165,9 +165,12 @@ def make_inventory_label(row):
     size_str = get_display_size(row)
     return f"{str(row['編號'])} | {str(row['名稱'])} ({size_str}) | 存:{row['庫存(顆)']}"
 
+# ★★★ 修改處：把【形狀】加回來選單顯示中 ★★★
 def make_design_label(row):
     size_str = get_display_size(row)
-    return f"【{str(row['五行'])}】{str(row['名稱'])} ({size_str}) | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
+    shape_str = str(row.get('形狀', '')).strip()
+    # 格式：【五行】名稱 | 形狀 (規格) | 價格 | 庫存
+    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} ({size_str}) | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
 
 # ==========================================
 # 3. 初始化 (含自動修復機制)
@@ -284,7 +287,7 @@ elif page == "📦 庫存管理與進貨":
     with tab1:
         inv_df = st.session_state['inventory']
         if not inv_df.empty:
-            # 製作選單 (使用智慧標籤)
+            # 製作選單 (已修復 KeyError)
             inv_df['label'] = inv_df.apply(make_inventory_label, axis=1)
             target_label = st.selectbox("選擇商品", inv_df['label'].tolist())
             
@@ -312,7 +315,7 @@ elif page == "📦 庫存管理與進貨":
                         '單號': batch_no if batch_no else f"AUTO-{int(time.time())}",
                         '動作': '補貨',
                         '編號': target_row['編號'], '分類': target_row['分類'], '名稱': target_row['名稱'],
-                        '尺寸規格': get_display_size(target_row), '廠商': target_row['進貨廠商'],
+                        '尺寸規格': target_row['尺寸規格'], '廠商': target_row['進貨廠商'],
                         '進貨數量': qty, '進貨總價': cost, '單價': cost/qty if qty>0 else 0
                     }
                     st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
@@ -452,84 +455,118 @@ elif page == "🧮 設計與成本計算":
     
     inv = st.session_state['inventory']
     if not inv.empty:
-        # 選單製作 (使用智慧標籤)
-        inv['disp'] = inv.apply(make_design_label, axis=1)
+        # 五行篩選
+        all_elements = sorted(inv['五行'].astype(str).unique().tolist())
+        st.write("👇 **第一步：選擇五行屬性 (可複選)**")
+        selected_elements = st.multiselect("五行", all_elements, default=all_elements)
+        if not selected_elements: selected_elements = all_elements
         
-        c1, c2, c3 = st.columns([3, 1, 1])
-        item_sel = c1.selectbox("選擇材料", inv['disp'].tolist())
-        qty_sel = c2.number_input("數量", 1)
-        
-        if c3.button("⬇️ 加入", use_container_width=True):
-            row = inv[inv['disp'] == item_sel].iloc[0]
-            st.session_state['current_design'].append({
-                '編號': row['編號'], '名稱': row['名稱'], 
-                '規格': get_display_size(row), # 使用智慧型規格
-                '單價': row['單顆成本'], '數量': qty_sel, 
-                '小計': row['單顆成本'] * qty_sel
-            })
-            
+        filtered_inv = inv[inv['五行'].isin(selected_elements)].sort_values(by=['五行', '名稱', '編號'])
+
         st.divider()
-        
-        if st.session_state['current_design']:
-            df_design = pd.DataFrame(st.session_state['current_design'])
-            st.table(df_design)
+
+        if not filtered_inv.empty:
+            # 製作顯示標籤 (包含即時庫存)
+            filtered_inv['disp_label'] = filtered_inv.apply(make_design_label, axis=1)
             
-            if st.button("🗑️ 清除最後一項"):
-                st.session_state['current_design'].pop()
-                st.rerun()
-            
-            mat_cost = df_design['小計'].sum()
-            st.markdown("#### 💰 成本結構")
-            c_labor, c_misc = st.columns(2)
-            labor = c_labor.number_input("工資 ($)", 0, step=10)
-            misc = c_misc.number_input("雜支/運費 ($)", 0, step=5)
-            
-            total_base = mat_cost + labor + misc
-            price_x3 = (mat_cost * 3) + labor + misc
-            price_x5 = (mat_cost * 5) + labor + misc
-            
-            st.info(f"基礎材料費: ${mat_cost:.1f}")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("總成本", f"${total_base:.0f}")
-            m2.metric("建議售價 (x3)", f"${price_x3:.0f}")
-            m3.metric("建議售價 (x5)", f"${price_x5:.0f}")
-            
-            st.divider()
-            sale_id = st.text_input("訂單編號", placeholder="例如: 蝦皮241212...")
-            
-            if st.button("✅ 確認售出 (扣除庫存並記錄)", type="primary"):
-                if not sale_id: sale_id = f"S-{int(time.time())}"
-                
-                detail_str = []
-                total_qty = 0
-                for item in st.session_state['current_design']:
-                    idx = inv[inv['編號'] == item['編號']].index[0]
-                    inv.at[idx, '庫存(顆)'] -= item['數量']
-                    
-                    log = {
-                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        '單號': sale_id, '動作': '售出',
-                        '編號': item['編號'], '名稱': item['名稱'], 
-                        '尺寸規格': item['規格'], '進貨數量': -item['數量'],
-                        '進貨總價': 0, '單價': item['單價']
-                    }
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    detail_str.append(f"{item['名稱']}({item['編號']})x{item['數量']}")
-                    total_qty += item['數量']
-                
-                design_log = {
-                    '單號': sale_id, '日期': date.today(), '總顆數': total_qty,
-                    '材料成本': mat_cost, '工資': labor, '雜支': misc,
-                    '總成本': total_base, '售價(x3)': price_x3, '售價(x5)': price_x5,
-                    '明細內容': " | ".join(detail_str)
-                }
-                st.session_state['design_history'] = pd.concat(
-                    [st.session_state['design_history'], pd.DataFrame([design_log])], ignore_index=True
+            c_sel, c_qty, c_btn = st.columns([3, 1, 1])
+            with c_sel:
+                selected_item_label = st.selectbox(
+                    f"👇 選擇材料 (篩選後共 {len(filtered_inv)} 筆)", 
+                    filtered_inv['disp_label'].tolist()
                 )
+            
+            with c_qty:
+                input_qty = st.number_input("數量", min_value=1, value=1)
+            
+            with c_btn:
+                st.write("") 
+                st.write("") 
+                if st.button("⬇️ 加入清單", use_container_width=True, type="primary"):
+                    selected_row = filtered_inv[filtered_inv['disp_label'] == selected_item_label].iloc[0]
+                    subtotal = selected_row['單顆成本'] * input_qty
+                    
+                    st.session_state['current_design'].append({
+                        '編號': selected_row['編號'], 
+                        '分類': selected_row['五行'], 
+                        '名稱': selected_row['名稱'],
+                        '形狀': selected_row['形狀'], 
+                        '規格': get_display_size(selected_row), # 智慧規格
+                        '單價': selected_row['單顆成本'], 
+                        '數量': input_qty, 
+                        '小計': subtotal
+                    })
+                    st.success(f"已加入 {input_qty} 顆 {selected_row['名稱']}")
+
+            st.divider()
+            
+            if st.session_state['current_design']:
+                df_design = pd.DataFrame(st.session_state['current_design'])
+                st.table(df_design[['名稱', '形狀', '規格', '單價', '數量', '小計']])
                 
-                save_inventory()
-                save_design_history()
-                st.session_state['current_design'] = []
-                st.success(f"已完成售出扣帳！單號：{sale_id}")
-                time.sleep(1)
-                st.rerun()
+                if st.button("🗑️ 清除最後一項"):
+                    st.session_state['current_design'].pop()
+                    st.rerun()
+                
+                mat_cost = df_design['小計'].sum()
+                st.markdown("#### 💰 成本結構")
+                c_labor, c_misc = st.columns(2)
+                labor = c_labor.number_input("工資 ($)", 0, step=10)
+                misc = c_misc.number_input("雜支/運費 ($)", 0, step=5)
+                
+                total_base = mat_cost + labor + misc
+                price_x3 = (mat_cost * 3) + labor + misc
+                price_x5 = (mat_cost * 5) + labor + misc
+                
+                st.info(f"💎 基礎材料費: ${mat_cost:.1f}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("總成本", f"${total_base:.0f}")
+                m2.metric("建議售價 (x3)", f"${price_x3:.0f}")
+                m3.metric("建議售價 (x5)", f"${price_x5:.0f}")
+                
+                st.divider()
+                sale_id = st.text_input("訂單編號", placeholder="例如: 蝦皮241212...")
+                
+                if st.button("✅ 確認售出 (扣除庫存並記錄)", type="primary"):
+                    if not sale_id: sale_id = f"S-{int(time.time())}"
+                    
+                    detail_str = []
+                    total_qty = 0
+                    
+                    for item in st.session_state['current_design']:
+                        mask = st.session_state['inventory']['編號'] == item['編號']
+                        if mask.any():
+                            idx = st.session_state['inventory'][mask].index[0]
+                            st.session_state['inventory'].at[idx, '庫存(顆)'] -= item['數量']
+                        
+                        log = {
+                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            '單號': sale_id, '動作': '售出',
+                            '編號': item['編號'], '分類': item['分類'], '名稱': item['名稱'], 
+                            '尺寸規格': item['規格'], '進貨數量': -item['數量'],
+                            '進貨總價': 0, '單價': item['單價']
+                        }
+                        st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                        detail_str.append(f"{item['名稱']}({item['編號']})x{item['數量']}")
+                        total_qty += item['數量']
+                    
+                    design_log = {
+                        '單號': sale_id, '日期': date.today(), '總顆數': total_qty,
+                        '材料成本': mat_cost, '工資': labor, '雜支': misc,
+                        '總成本': total_base, '售價(x3)': price_x3, '售價(x5)': price_x5,
+                        '明細內容': " | ".join(detail_str)
+                    }
+                    st.session_state['design_history'] = pd.concat(
+                        [st.session_state['design_history'], pd.DataFrame([design_log])], ignore_index=True
+                    )
+                    
+                    save_inventory()
+                    save_design_history()
+                    st.session_state['current_design'] = []
+                    st.success(f"已完成售出扣帳！單號：{sale_id}")
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            st.warning("⚠️ 找不到符合條件的庫存項目，請檢查五行篩選或庫存是否為空。")
+    else:
+        st.info("目前庫存為空，請先至「📦 庫存管理」建立商品。")
