@@ -76,7 +76,8 @@ def normalize_columns(df):
     rename_map = {
         '尺寸': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', 'Width': '寬度mm',
         '長度': '長度mm', 'Length': '長度mm',
-        'Name': '名稱', 'Category': '分類', 'Code': '編號', 'ID': '編號'
+        'Name': '名稱', 'Category': '分類', 'Code': '編號', 'ID': '編號',
+        '尺寸規格': '備註規格' # 將舊的尺寸規格暫存，避免遺失，但主要邏輯改用寬/長
     }
     df = df.rename(columns=rename_map)
     
@@ -88,7 +89,7 @@ def normalize_columns(df):
             else:
                 df[col] = ""
     
-    # 只保留 COLUMNS 定義的欄位 (自動過濾掉 '系列', '尺寸規格')
+    # 只保留 COLUMNS 定義的欄位
     return df[COLUMNS]
 
 def generate_new_id(category, df):
@@ -110,10 +111,8 @@ def generate_new_id(category, df):
 def merge_inventory_duplicates(df):
     """合併重複項目"""
     if df.empty: return df, 0
-    # 合併依據：分類、名稱、寬度、長度、形狀、五行
     group_cols = ['分類', '名稱', '寬度mm', '長度mm', '形狀', '五行']
     
-    # 確保欄位存在
     if not set(group_cols).issubset(df.columns): return df, 0
     
     work_df = df.copy()
@@ -129,14 +128,11 @@ def merge_inventory_duplicates(df):
     agg['單顆成本'] = agg.apply(lambda r: (r['總成本'] / r['庫存(顆)']) if r['庫存(顆)'] > 0 else 0, axis=1)
     agg = agg.drop(columns=['總成本'])
     
-    # 保留最新的廠商與編號
     work_df['進貨日期_排序'] = pd.to_datetime(work_df['進貨日期'], errors='coerce')
     base_rows = work_df.sort_values(['進貨日期_排序', '編號'], ascending=[False, False]).groupby(group_cols, as_index=False).first()
     
-    # 合併資料
     final_df = pd.merge(agg, base_rows[['編號', '進貨廠商'] + group_cols], on=group_cols, how='left')
     
-    # 重整欄位順序
     return normalize_columns(final_df), original_count - len(final_df)
 
 def format_size(row):
@@ -152,12 +148,14 @@ def format_size(row):
 
 def make_inventory_label(row):
     size_str = format_size(row)
-    return f"{str(row['編號'])} | {str(row['名稱'])} {size_str} | 存:{row['庫存(顆)']}"
+    size_disp = f"({size_str})" if size_str else ""
+    return f"{str(row['編號'])} | {str(row['名稱'])} {size_disp} | 存:{row['庫存(顆)']}"
 
 def make_design_label(row):
     size_str = format_size(row)
+    size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} ({size_str}) | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
+    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
 
 def get_dynamic_options(column_name, default_list):
     options = set(default_list)
@@ -178,14 +176,13 @@ if 'inventory' not in st.session_state:
         except: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
-# 強制正規化：確保移除舊的「系列」「尺寸規格」欄位
+# 強制正規化與修復
 if 'inventory' in st.session_state:
     st.session_state['inventory'] = normalize_columns(st.session_state['inventory'])
 
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
 else:
-    # 確保歷史紀錄也有單號
     if '單號' not in st.session_state['history'].columns:
         st.session_state['history'].insert(1, '單號', '')
 
@@ -226,9 +223,9 @@ with st.sidebar:
         except Exception as e: st.error(f"讀取失敗: {e}")
 
 # ------------------------------------------
-# 頁面: 庫存管理
+# 頁面: 庫存管理 (★ 這裡修正了 SyntaxError ★)
 # ------------------------------------------
-elif page == "📦 庫存管理與進貨":
+if page == "📦 庫存管理與進貨":
     st.subheader("📦 庫存管理")
     tab1, tab2, tab3 = st.tabs(["🔄 舊品補貨", "✨ 建立新商品", "🛠️ 修改與刪除"])
     
@@ -278,10 +275,8 @@ elif page == "📦 庫存管理與進貨":
             st.markdown("##### 1. 基本資料")
             c1, c2 = st.columns([1, 2])
             with c1: 
-                # 只保留基本分類
                 new_cat = st.selectbox("分類 (產生編號用)", ["天然石", "配件", "耗材"])
             with c2:
-                # 名稱選單
                 existing_names = []
                 if not st.session_state['inventory'].empty:
                     cat_df = st.session_state['inventory'][st.session_state['inventory']['分類'] == new_cat]
@@ -304,7 +299,7 @@ elif page == "📦 庫存管理與進貨":
         if final_name and not st.session_state['inventory'].empty:
             same_name_df = st.session_state['inventory'][(st.session_state['inventory']['分類'] == new_cat) & (st.session_state['inventory']['名稱'] == final_name)]
             if not same_name_df.empty:
-                prev_row = same_name_df.iloc[-1] # 取最後一筆
+                prev_row = same_name_df.iloc[-1]
 
         with st.form("add_new"):
             st.markdown("##### 3. 詳細資訊")
@@ -464,7 +459,7 @@ elif page == "📦 庫存管理與進貨":
                  })
 
 # ------------------------------------------
-# 頁面: 紀錄查詢
+# 頁面 B: 紀錄
 # ------------------------------------------
 elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 歷史紀錄中心")
@@ -473,7 +468,7 @@ elif page == "📜 進貨紀錄查詢":
     with tab_sales: st.dataframe(st.session_state['design_history'], use_container_width=True)
 
 # ------------------------------------------
-# 頁面: 設計與成本
+# 頁面 C: 設計與成本
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 成本試算與報價")
@@ -595,7 +590,6 @@ elif page == "🧮 設計與成本計算":
                     time.sleep(1)
                     st.rerun()
         else:
-            st.warning("⚠️ 找不到符合條件的庫存項目。")
+            st.warning("⚠️ 找不到符合條件的庫存項目，請檢查五行篩選或庫存是否為空。")
     else:
         st.info("目前庫存為空，請先至「📦 庫存管理」建立商品。")
-        
