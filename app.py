@@ -512,7 +512,7 @@ with tab_log:
         cols.insert(1, '單號')
     st.dataframe(st.session_state['history'][cols], use_container_width=True)
         
-    with tab_sales:
+with tab_sales:
     st.dataframe(st.session_state['design_history'], use_container_width=True)
 
 # ------------------------------------------
