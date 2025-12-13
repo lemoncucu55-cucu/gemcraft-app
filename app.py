@@ -505,9 +505,10 @@ elif page == "📜 進貨紀錄查詢":
     
     with tab_log:
         cols = st.session_state['history'].columns.tolist()
-        if '單號' in cols:
-            cols.remove('單號')
-            cols.insert(1, '單號')
+        # 修改為：模糊搜尋 (只要整行資料的文字裡包含關鍵字，就算符合)
+        mask = df_source.astype(str).apply(
+            lambda row: all(tag in " ".join(row.values) for tag in selected_tags), axis=1
+        )
             st.dataframe(st.session_state['history'][cols], use_container_width=True)
         else: st.dataframe(st.session_state['history'], use_container_width=True)
         
