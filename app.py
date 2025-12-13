@@ -457,44 +457,44 @@ if page == "📦 庫存管理與進貨":
 
 # --- 請用這段取代原本第 458-464 行 ---
 
-# 1. 讀取資料 (如果讀不到就給一個空的 DataFrame 避免報錯)
-df_source = st.session_state.get('inventory', pd.DataFrame())
-
-# 2. 製作搜尋選單
-try:
-    # 抓取所有資料轉成文字，並製作成清單
-    search_options = sorted(list(set(df_source.astype(str).values.flatten())))
-    # 過濾掉空白或無效值
-    search_options = [x for x in search_options if x not in ['nan', '', 'None']]
-except:
-    search_options = []
-
-# 3. 顯示多選搜尋框
-selected_tags = st.multiselect(
-    "🔍 萬用搜尋 (可多選/輸入關鍵字)", 
-    options=search_options,
-    placeholder="輸入編號、廠商或形狀..."
-)
-
-# 4. 關鍵篩選邏輯 (決定表格最後要顯示什麼)
-if selected_tags and not df_source.empty:
-    # 如果有選關鍵字：只顯示符合的資料
-    mask = df_source.astype(str).apply(
-        lambda row: all(tag in row.values for tag in selected_tags), axis=1
+    # 1. 讀取資料 (如果讀不到就給一個空的 DataFrame 避免報錯)
+    df_source = st.session_state.get('inventory', pd.DataFrame())
+    
+    # 2. 製作搜尋選單
+    try:
+        # 抓取所有資料轉成文字，並製作成清單
+        search_options = sorted(list(set(df_source.astype(str).values.flatten())))
+        # 過濾掉空白或無效值
+        search_options = [x for x in search_options if x not in ['nan', '', 'None']]
+    except:
+        search_options = []
+    
+    # 3. 顯示多選搜尋框
+    selected_tags = st.multiselect(
+        "🔍 萬用搜尋 (可多選/輸入關鍵字)", 
+        options=search_options,
+        placeholder="輸入編號、廠商或形狀..."
     )
-    disp_df = df_source[mask]
-else:
-    # 如果沒選關鍵字，或者資料庫是空的：顯示全部資料
-    # (這行最重要，有了它資料就不會消失)
-    disp_df = df_source
-
-    st.dataframe(disp_df, use_container_width=True, height=400,
-                 column_config={
-                     "進貨總價": st.column_config.NumberColumn(format="$%d"),
-                     "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
-                     "寬度mm": st.column_config.NumberColumn(format="%.1f"),
-                     "長度mm": st.column_config.NumberColumn(format="%.1f")
-                 })
+    
+    # 4. 關鍵篩選邏輯 (決定表格最後要顯示什麼)
+    if selected_tags and not df_source.empty:
+        # 如果有選關鍵字：只顯示符合的資料
+        mask = df_source.astype(str).apply(
+            lambda row: all(tag in row.values for tag in selected_tags), axis=1
+        )
+        disp_df = df_source[mask]
+    else:
+        # 如果沒選關鍵字，或者資料庫是空的：顯示全部資料
+        # (這行最重要，有了它資料就不會消失)
+        disp_df = df_source
+    
+        st.dataframe(disp_df, use_container_width=True, height=400,
+                     column_config={
+                         "進貨總價": st.column_config.NumberColumn(format="$%d"),
+                         "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
+                         "寬度mm": st.column_config.NumberColumn(format="%.1f"),
+                         "長度mm": st.column_config.NumberColumn(format="%.1f")
+                     })
 
 # ------------------------------------------
 # 頁面 B: 紀錄
