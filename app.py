@@ -16,13 +16,13 @@ COLUMNS = [
     '庫存(顆)', '單顆成本'
 ]
 
-# 歷史紀錄欄位
+# 歷史紀錄欄位 (單顆珠子異動)
 HISTORY_COLUMNS = [
     '紀錄時間', '單號', '動作', '編號', '分類', '名稱', '規格', 
     '廠商', '進貨數量', '進貨總價', '單價'
 ]
 
-# 設計銷售紀錄欄位
+# 設計銷售紀錄欄位 (整條手鍊訂單)
 DESIGN_HISTORY_COLUMNS = [
     '單號', '日期', '總顆數', '材料成本', '工資', '雜支', 
     '總成本', '售價(x3)', '售價(x5)', '明細內容'
@@ -35,23 +35,6 @@ DESIGN_HISTORY_FILE = 'design_sales_history.csv'
 DEFAULT_SUPPLIERS = ["小聰頭", "廠商A", "廠商B", "自用", "蝦皮", "淘寶"]
 DEFAULT_SHAPES = ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型"]
 DEFAULT_ELEMENTS = ["金", "木", "水", "火", "土", "綜合", "銀", "銅", "14K包金"]
-
-# 初始範例資料
-INITIAL_DATA = {
-    '編號': ['ST0001'],
-    '分類': ['天然石'],
-    '名稱': ['範例水晶'],
-    '寬度mm': [6.0],
-    '長度mm': [6.0],
-    '形狀': ['圓珠'],
-    '五行': ['綜合'],
-    '進貨總價': [100],
-    '進貨數量(顆)': [100],
-    '進貨日期': [str(date.today())],
-    '進貨廠商': ['範例廠商'],
-    '庫存(顆)': [100],
-    '單顆成本': [1.0]
-}
 
 # ==========================================
 # 2. 核心邏輯函式
@@ -88,7 +71,6 @@ def normalize_columns(df):
                 df[col] = 0
             else:
                 df[col] = ""
-    
     return df[COLUMNS]
 
 def generate_new_id(category, df):
@@ -185,6 +167,7 @@ else:
     if '單號' not in st.session_state['history'].columns:
         st.session_state['history'].insert(1, '單號', '')
 
+# 初始化銷售紀錄
 if 'design_history' not in st.session_state:
     if os.path.exists(DESIGN_HISTORY_FILE):
         try:
@@ -207,14 +190,16 @@ with st.sidebar:
     page = st.radio("前往", ["📦 庫存管理與進貨", "📜 進貨紀錄查詢", "🧮 設計與成本計算"])
     st.divider()
     
+    # 下載區域
     if not st.session_state['inventory'].empty:
         csv = st.session_state['inventory'].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 下載庫存總表 (CSV)", csv, f'inventory_{date.today()}.csv', "text/csv")
         
     if not st.session_state['design_history'].empty:
         d_csv = st.session_state['design_history'].to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 下載銷售紀錄 (CSV)", d_csv, f'sales_{date.today()}.csv', "text/csv")
+        st.download_button("📥 下載訂單售出紀錄 (CSV)", d_csv, f'sales_{date.today()}.csv', "text/csv")
         
+    st.divider()
     uploaded_inv = st.file_uploader("📤 上傳庫存備份 (CSV)", type=['csv'])
     if uploaded_inv:
         try:
@@ -453,24 +438,22 @@ if page == "📦 庫存管理與進貨":
             time.sleep(1)
             st.rerun()
 
-    # 1. 讀取資料
+    # 搜尋與顯示庫存
     df_source = st.session_state.get('inventory', pd.DataFrame())
     
-    # 2. 製作搜尋選單
+    # 搜尋邏輯
     try:
         search_options = sorted(list(set(df_source.astype(str).values.flatten())))
         search_options = [x for x in search_options if x not in ['nan', '', 'None']]
     except:
         search_options = []
     
-    # 3. 顯示多選搜尋框
     selected_tags = st.multiselect(
         "🔍 萬用搜尋 (可多選/輸入關鍵字)", 
         options=search_options,
         placeholder="輸入編號、廠商或形狀..."
     )
     
-    # 4. 關鍵篩選邏輯 (模糊搜尋)
     if selected_tags and not df_source.empty:
         mask = df_source.astype(str).apply(
             lambda row: all(tag in " ".join(row.values) for tag in selected_tags), axis=1
@@ -596,19 +579,23 @@ elif page == "🧮 設計與成本計算":
                 m4.metric("建議售價 (材料x5+工雜)", f"${price_x5:.0f}")
                 
                 st.divider()
+                
+                # === 這裡就是新增的售出/結帳區 ===
                 act_c1, act_c2 = st.columns([3, 1])
                 
                 with act_c1:
                     st.caption(f"💡 參考：批發價(x2) ${total_cost_base*2:.0f}")
-                    sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：蝦皮訂單號")
+                    sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：蝦皮訂單號-241213")
                 
                 with act_c2:
-                    if st.button("✅ 確認售出 (扣庫存)", type="primary", use_container_width=True):
+                    # 1. 確定售出按鈕
+                    if st.button("✅ 確定售出 (扣庫存)", type="primary", use_container_width=True):
                         if not sales_order_id:
                             sales_order_id = f"S-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
                         detail_str = []
                         
+                        # 2. 扣除庫存並寫入詳細流水帳
                         for item in design_list:
                             mask = st.session_state['inventory']['編號'] == item['編號']
                             if mask.any():
@@ -628,6 +615,7 @@ elif page == "🧮 設計與成本計算":
                                 st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                                 detail_str.append(f"{item['名稱']}({item['編號']})x{item['數量']}")
                         
+                        # 3. 建立訂單紀錄
                         design_log = {
                             '單號': sales_order_id, '日期': date.today(), '總顆數': tot_qty,
                             '材料成本': mat_cost, '工資': labor, '雜支': misc,
@@ -636,6 +624,7 @@ elif page == "🧮 設計與成本計算":
                         }
                         st.session_state['design_history'] = pd.concat([st.session_state['design_history'], pd.DataFrame([design_log])], ignore_index=True)
                         
+                        # 4. 存檔與清理
                         save_inventory()
                         save_design_history()
                         st.session_state['current_design'] = []
