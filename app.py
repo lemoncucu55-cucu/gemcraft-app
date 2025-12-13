@@ -145,11 +145,9 @@ def format_size(row):
     except: pass
     return ""
 
-# ★★★ 修改重點：在補貨選單也加入【五行】顯示 ★★★
 def make_inventory_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
-    # 這裡加入 row['五行']
     return f"【{str(row['五行'])}】 {str(row['編號'])} | {str(row['名稱'])} {size_disp} | 存:{row['庫存(顆)']}"
 
 def make_design_label(row):
@@ -416,7 +414,7 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
                         st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
                         st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem
+                        st.session_state['inventory'].at[orig_idx, '五行'] = eelm
                         st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
                         st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                         st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
@@ -455,16 +453,12 @@ if page == "📦 庫存管理與進貨":
             time.sleep(1)
             st.rerun()
 
-# --- 請用這段取代原本第 458-464 行 ---
-
-    # 1. 讀取資料 (如果讀不到就給一個空的 DataFrame 避免報錯)
+    # 1. 讀取資料
     df_source = st.session_state.get('inventory', pd.DataFrame())
     
     # 2. 製作搜尋選單
     try:
-        # 抓取所有資料轉成文字，並製作成清單
         search_options = sorted(list(set(df_source.astype(str).values.flatten())))
-        # 過濾掉空白或無效值
         search_options = [x for x in search_options if x not in ['nan', '', 'None']]
     except:
         search_options = []
@@ -476,27 +470,22 @@ if page == "📦 庫存管理與進貨":
         placeholder="輸入編號、廠商或形狀..."
     )
     
-    # 4. 關鍵篩選邏輯 (決定表格最後要顯示什麼)
-   # --- 這裡才是正確的庫存搜尋邏輯 (約第 480-485 行) ---
+    # 4. 關鍵篩選邏輯 (模糊搜尋)
     if selected_tags and not df_source.empty:
-        # 模糊搜尋：把整行資料串起來找關鍵字
         mask = df_source.astype(str).apply(
             lambda row: all(tag in " ".join(row.values) for tag in selected_tags), axis=1
         )
         disp_df = df_source[mask]
     else:
         disp_df = df_source
-        # 如果沒選關鍵字，或者資料庫是空的：顯示全部資料
-        # (這行最重要，有了它資料就不會消失)
-        disp_df = df_source
     
-        st.dataframe(disp_df, use_container_width=True, height=400,
-                     column_config={
-                         "進貨總價": st.column_config.NumberColumn(format="$%d"),
-                         "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
-                         "寬度mm": st.column_config.NumberColumn(format="%.1f"),
-                         "長度mm": st.column_config.NumberColumn(format="%.1f")
-                     })
+    st.dataframe(disp_df, use_container_width=True, height=400,
+                 column_config={
+                     "進貨總價": st.column_config.NumberColumn(format="$%d"),
+                     "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
+                     "寬度mm": st.column_config.NumberColumn(format="%.1f"),
+                     "長度mm": st.column_config.NumberColumn(format="%.1f")
+                 })
 
 # ------------------------------------------
 # 頁面 B: 紀錄
@@ -505,15 +494,15 @@ elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 歷史紀錄中心")
     tab_log, tab_sales = st.tabs(["📦 庫存異動流水帳", "💎 訂單銷售紀錄"])
     
-with tab_log:
-    cols = st.session_state['history'].columns.tolist()
-    if '單號' in cols:
-        cols.remove('單號')
-        cols.insert(1, '單號')
-    st.dataframe(st.session_state['history'][cols], use_container_width=True)
+    with tab_log:
+        cols = st.session_state['history'].columns.tolist()
+        if '單號' in cols:
+            cols.remove('單號')
+            cols.insert(1, '單號')
+        st.dataframe(st.session_state['history'][cols], use_container_width=True)
         
-with tab_sales:
-    st.dataframe(st.session_state['design_history'], use_container_width=True)
+    with tab_sales:
+        st.dataframe(st.session_state['design_history'], use_container_width=True)
 
 # ------------------------------------------
 # 頁面 C: 設計與成本
