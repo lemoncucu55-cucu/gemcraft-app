@@ -477,13 +477,15 @@ if page == "📦 庫存管理與進貨":
     )
     
     # 4. 關鍵篩選邏輯 (決定表格最後要顯示什麼)
+   # --- 這裡才是正確的庫存搜尋邏輯 (約第 480-485 行) ---
     if selected_tags and not df_source.empty:
-        # 如果有選關鍵字：只顯示符合的資料
+        # 模糊搜尋：把整行資料串起來找關鍵字
         mask = df_source.astype(str).apply(
-            lambda row: all(tag in row.values for tag in selected_tags), axis=1
+            lambda row: all(tag in " ".join(row.values) for tag in selected_tags), axis=1
         )
         disp_df = df_source[mask]
     else:
+        disp_df = df_source
         # 如果沒選關鍵字，或者資料庫是空的：顯示全部資料
         # (這行最重要，有了它資料就不會消失)
         disp_df = df_source
@@ -503,14 +505,11 @@ elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 歷史紀錄中心")
     tab_log, tab_sales = st.tabs(["📦 庫存異動流水帳", "💎 訂單銷售紀錄"])
     
-    with tab_log:
-        cols = st.session_state['history'].columns.tolist()
-        # 修改為：模糊搜尋 (只要整行資料的文字裡包含關鍵字，就算符合)
-        mask = df_source.astype(str).apply(
-            lambda row: all(tag in " ".join(row.values) for tag in selected_tags), axis=1
-        )
-            st.dataframe(st.session_state['history'][cols], use_container_width=True)
-        else: st.dataframe(st.session_state['history'], use_container_width=True)
+  # --- 請將 508-513 行 替換回這段 (恢復原狀) ---
+        if '單號' in cols:
+            cols.remove('單號')
+            cols.insert(1, '單號')
+        st.dataframe(st.session_state['history'][cols], use_container_width=True)
         
     with tab_sales:
         st.dataframe(st.session_state['design_history'], use_container_width=True)
