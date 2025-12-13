@@ -505,14 +505,15 @@ elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 歷史紀錄中心")
     tab_log, tab_sales = st.tabs(["📦 庫存異動流水帳", "💎 訂單銷售紀錄"])
     
-  # --- 請將 508-513 行 替換回這段 (恢復原狀) ---
-        if '單號' in cols:
-            cols.remove('單號')
-            cols.insert(1, '單號')
-        st.dataframe(st.session_state['history'][cols], use_container_width=True)
+with tab_log:
+    cols = st.session_state['history'].columns.tolist()
+    if '單號' in cols:
+        cols.remove('單號')
+        cols.insert(1, '單號')
+    st.dataframe(st.session_state['history'][cols], use_container_width=True)
         
     with tab_sales:
-        st.dataframe(st.session_state['design_history'], use_container_width=True)
+    st.dataframe(st.session_state['design_history'], use_container_width=True)
 
 # ------------------------------------------
 # 頁面 C: 設計與成本
