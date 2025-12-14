@@ -138,7 +138,6 @@ def make_design_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    # 修改：顯示小數點後 2 位
     return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | ${float(row['單顆成本']):.2f}/顆 | 存:{row['庫存(顆)']}"
 
 def get_dynamic_options(column_name, default_list):
@@ -235,7 +234,6 @@ if page == "📦 庫存管理與進貨":
                 batch_no = st.text_input("進貨單號 (選填)", placeholder="Auto")
                 c1, c2 = st.columns(2)
                 qty = c1.number_input("進貨數量", 1)
-                # 修改：允許輸入小數點金額
                 cost = c2.number_input("進貨總價", 0.0, format="%.2f")
                 
                 if st.form_submit_button("📦 確認補貨"):
@@ -358,7 +356,7 @@ if page == "📦 庫存管理與進貨":
                     time.sleep(1)
                     st.rerun()
 
-    # === Tab 3: 修改與盤點 (Fixed: eelem typo) ===
+    # === Tab 3: 修改與盤點 ===
     with tab3:
         st.markdown("##### 🛠️ 修正或盤點")
         if not st.session_state['inventory'].empty:
@@ -415,7 +413,7 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
                         st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
                         st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem # 已修正變數名稱
+                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem
                         st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
                         st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                         st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
@@ -506,18 +504,90 @@ if page == "📦 庫存管理與進貨":
                  })
 
 # ------------------------------------------
-# 頁面 B: 紀錄
+# 頁面 B: 紀錄 (新增刪除並還原功能)
 # ------------------------------------------
 elif page == "📜 進貨紀錄查詢":
     st.subheader("📜 歷史紀錄中心")
     tab_log, tab_sales = st.tabs(["📦 庫存異動流水帳", "💎 訂單銷售紀錄"])
     
     with tab_log:
-        cols = st.session_state['history'].columns.tolist()
+        df_log = st.session_state['history'].copy()
+        
+        # 調整欄位順序
+        cols = df_log.columns.tolist()
         if '單號' in cols:
             cols.remove('單號')
             cols.insert(1, '單號')
-        st.dataframe(st.session_state['history'][cols], use_container_width=True)
+        df_log = df_log[cols]
+
+        # 插入刪除勾選欄位
+        df_log.insert(0, "刪除", False)
+
+        edited_df = st.data_editor(
+            df_log,
+            column_config={
+                "刪除": st.column_config.CheckboxColumn(
+                    "選取刪除",
+                    help="勾選並按下方按鈕以刪除紀錄並還原庫存",
+                    default=False,
+                )
+            },
+            disabled=cols, 
+            use_container_width=True,
+            key="history_editor"
+        )
+
+        # 刪除並還原按鈕
+        if st.button("🗑️ 刪除選取的紀錄 (並還原庫存)", type="primary"):
+            rows_to_delete = edited_df[edited_df['刪除']]
+            
+            if not rows_to_delete.empty:
+                updated_items = []
+                # 遍歷要刪除的紀錄進行還原
+                for index, row in rows_to_delete.iterrows():
+                    target_id = row['編號']
+                    qty_change = float(row['進貨數量'])
+                    cost_change = float(row['進貨總價'])
+                    
+                    mask = st.session_state['inventory']['編號'] == target_id
+                    if mask.any():
+                        idx = st.session_state['inventory'][mask].index[0]
+                        current_qty = float(st.session_state['inventory'].at[idx, '庫存(顆)'])
+                        current_cost = float(st.session_state['inventory'].at[idx, '單顆成本'])
+                        
+                        # 計算當前總值
+                        current_total_value = current_qty * current_cost
+                        
+                        # 還原邏輯：
+                        # 如果原本是 +10 (補貨)，現在要 -10
+                        # 如果原本是 -5 (售出)，現在要 +5 (即減去負數)
+                        new_qty = current_qty - qty_change
+                        
+                        # 還原成本邏輯：
+                        if qty_change > 0: # 刪除補貨紀錄 (扣除成本)
+                             new_total_value = current_total_value - cost_change
+                        else: # 刪除售出紀錄 (加回價值，使用當時記錄的單價)
+                             logged_unit_cost = float(row['單價'])
+                             new_total_value = current_total_value + (abs(qty_change) * logged_unit_cost)
+                        
+                        # 防止除以零
+                        new_unit_cost = new_total_value / new_qty if new_qty > 0 else 0
+                        
+                        # 寫回庫存
+                        st.session_state['inventory'].at[idx, '庫存(顆)'] = new_qty if new_qty >= 0 else 0
+                        st.session_state['inventory'].at[idx, '單顆成本'] = new_unit_cost
+                        updated_items.append(f"{row['名稱']}")
+
+                # 更新歷史紀錄 (只保留沒被勾選的)
+                rows_to_keep = edited_df[~edited_df['刪除']][cols]
+                st.session_state['history'] = rows_to_keep
+                
+                save_inventory()
+                st.success(f"✅ 已刪除 {len(rows_to_delete)} 筆紀錄，並還原庫存：{', '.join(updated_items)}")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.warning("⚠️ 請先勾選要刪除的項目")
         
     with tab_sales:
         st.dataframe(st.session_state['design_history'], use_container_width=True)
