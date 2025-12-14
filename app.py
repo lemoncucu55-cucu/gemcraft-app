@@ -31,7 +31,7 @@ DESIGN_HISTORY_COLUMNS = [
 DEFAULT_CSV_FILE = 'inventory_backup_v2.csv'
 DESIGN_HISTORY_FILE = 'design_sales_history.csv'
 
-# 預設選單資料 (新增形狀列表)
+# 預設選單資料 (含形狀)
 DEFAULT_SUPPLIERS = ["小聰頭", "廠商A", "廠商B", "自用", "蝦皮", "淘寶"]
 DEFAULT_SHAPES = ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型", "原礦"]
 DEFAULT_ELEMENTS = ["金", "木", "水", "火", "土", "綜合", "銀", "銅", "14K包金"]
@@ -131,7 +131,6 @@ def format_size(row):
 def make_inventory_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
-    # 顯示時加入形狀
     shape_str = str(row.get('形狀', '')).strip()
     return f"【{str(row['五行'])}】 {str(row['編號'])} | {str(row['名稱'])} | {shape_str} {size_disp} | 存:{row['庫存(顆)']}"
 
@@ -193,7 +192,7 @@ with st.sidebar:
     page = st.radio("前往", ["📦 庫存管理與進貨", "📜 進貨紀錄查詢", "🧮 設計與成本計算"])
     st.divider()
     
-    # 下載區域 (如果沒有銷售紀錄就不顯示下載按鈕)
+    # 下載區域
     if not st.session_state['inventory'].empty:
         csv = st.session_state['inventory'].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 下載庫存總表 (CSV)", csv, f'inventory_{date.today()}.csv', "text/csv")
@@ -260,7 +259,7 @@ if page == "📦 庫存管理與進貨":
                     st.rerun()
         else: st.info("無庫存")
 
-    # === Tab 2: 建立新商品 (新增形狀選擇) ===
+    # === Tab 2: 建立新商品 (含形狀) ===
     with tab2:
         with st.container():
             st.markdown("##### 1. 基本資料")
@@ -296,7 +295,6 @@ if page == "📦 庫存管理與進貨":
             st.markdown("##### 3. 詳細資訊")
             batch_id_new = st.text_input("進貨單號 (選填)", placeholder="Auto")
 
-            # 取得選項 (包含新增的形狀)
             shape_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
             elem_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
             sup_opts = get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS)
@@ -305,7 +303,6 @@ if page == "📦 庫存管理與進貨":
                 try: return opts.index(val)
                 except: return 0
 
-            # 嘗試抓取上次的紀錄
             idx_s = get_idx(shape_opts, prev_row['形狀']) if prev_row is not None and '形狀' in prev_row else 0
             idx_e = get_idx(elem_opts, prev_row['五行']) if prev_row is not None else 0
             idx_p = get_idx(sup_opts, prev_row['進貨廠商']) if prev_row is not None else 0
@@ -357,7 +354,7 @@ if page == "📦 庫存管理與進貨":
                     time.sleep(1)
                     st.rerun()
 
-    # === Tab 3: 修改 (新增形狀修改) ===
+    # === Tab 3: 修改 (已修復變數定義) ===
     with tab3:
         st.markdown("##### 🛠️ 修正或刪除")
         if not st.session_state['inventory'].empty:
@@ -383,12 +380,13 @@ if page == "📦 庫存管理與進貨":
                     except: return 0
 
                 ec4, ec5, ec6 = st.columns(3)
-                # 修改這裡：加入形狀的修改
+                # 這裡是用來選「下拉選單」的值
                 current_shape = orig_row['形狀'] if '形狀' in orig_row else ''
                 with ec4: eshp_sel = st.selectbox("形狀", shp_opts, index=get_eidx(shp_opts, current_shape))
                 with ec5: eelm_sel = st.selectbox("五行", elm_opts, index=get_eidx(elm_opts, orig_row['五行']))
                 with ec6: esup_sel = st.selectbox("廠商", sup_opts, index=get_eidx(sup_opts, orig_row['進貨廠商']))
 
+                # 這裡定義 eshape, eelem, esup (避免 NameError)
                 em1, em2, em3 = st.columns(3)
                 eshape = em1.text_input("↳ 新形狀") if eshp_sel == "➕ 手動輸入/新增" else eshp_sel
                 eelem = em2.text_input("↳ 新五行") if eelm_sel == "➕ 手動輸入/新增" else eelm_sel
@@ -405,8 +403,9 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[orig_idx, '名稱'] = ename
                         st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
                         st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
+                        # 這裡會用到上面定義的 eshape, eelem, esup
                         st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelm
+                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem
                         st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
                         st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                         st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
@@ -586,6 +585,8 @@ elif page == "🧮 設計與成本計算":
                 m4.metric("建議售價 (材料x5+工雜)", f"${price_x5:.0f}")
                 
                 st.divider()
+                
+                # === 售出/結帳區 ===
                 act_c1, act_c2 = st.columns([3, 1])
                 
                 with act_c1:
@@ -593,12 +594,14 @@ elif page == "🧮 設計與成本計算":
                     sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：蝦皮訂單號-241213")
                 
                 with act_c2:
+                    # 確定售出按鈕
                     if st.button("✅ 確定售出 (扣庫存)", type="primary", use_container_width=True):
                         if not sales_order_id:
                             sales_order_id = f"S-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
                         detail_str = []
                         
+                        # 扣除庫存並寫入詳細流水帳
                         for item in design_list:
                             mask = st.session_state['inventory']['編號'] == item['編號']
                             if mask.any():
@@ -618,6 +621,7 @@ elif page == "🧮 設計與成本計算":
                                 st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                                 detail_str.append(f"{item['名稱']}({item['編號']})x{item['數量']}")
                         
+                        # 建立訂單紀錄
                         design_log = {
                             '單號': sales_order_id, '日期': date.today(), '總顆數': tot_qty,
                             '材料成本': mat_cost, '工資': labor, '雜支': misc,
