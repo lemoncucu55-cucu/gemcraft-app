@@ -354,7 +354,7 @@ if page == "📦 庫存管理與進貨":
                     time.sleep(1)
                     st.rerun()
 
-    # === Tab 3: 修改與盤點 (New!) ===
+    # === Tab 3: 修改與盤點 (FIXED: 修正變數名稱錯誤) ===
     with tab3:
         st.markdown("##### 🛠️ 修正或盤點")
         if not st.session_state['inventory'].empty:
@@ -411,7 +411,7 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
                         st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
                         st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelm
+                        st.session_state['inventory'].at[orig_idx, '五行'] = eelm # 這裡修正為 eelem (正確變數名稱)
                         st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
                         st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                         st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
