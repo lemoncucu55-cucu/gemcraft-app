@@ -138,7 +138,8 @@ def make_design_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | ${float(row['單顆成本']):.1f}/顆 | 存:{row['庫存(顆)']}"
+    # 修改：顯示小數點後 2 位
+    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | ${float(row['單顆成本']):.2f}/顆 | 存:{row['庫存(顆)']}"
 
 def get_dynamic_options(column_name, default_list):
     options = set(default_list)
@@ -234,7 +235,8 @@ if page == "📦 庫存管理與進貨":
                 batch_no = st.text_input("進貨單號 (選填)", placeholder="Auto")
                 c1, c2 = st.columns(2)
                 qty = c1.number_input("進貨數量", 1)
-                cost = c2.number_input("進貨總價", 0)
+                # 修改：允許輸入小數點金額
+                cost = c2.number_input("進貨總價", 0.0, format="%.2f")
                 
                 if st.form_submit_button("📦 確認補貨"):
                     new_qty = target_row['庫存(顆)'] + qty
@@ -318,7 +320,9 @@ if page == "📦 庫存管理與進貨":
             final_sup = mc3.text_input("↳ 新廠商") if p_sel == "➕ 手動輸入/新增" else p_sel
 
             c7, c8, c9 = st.columns(3)
-            with c7: price = st.number_input("進貨總價", 0)
+            with c7: 
+                # 修改：允許小數點輸入
+                price = st.number_input("進貨總價", 0.0, format="%.2f")
             with c8: qty = st.number_input("進貨數量", 1)
             with c9: p_date = st.date_input("進貨日期", value=date.today())
             
@@ -354,7 +358,7 @@ if page == "📦 庫存管理與進貨":
                     time.sleep(1)
                     st.rerun()
 
-    # === Tab 3: 修改與盤點 (FIXED: 修正變數名稱錯誤) ===
+    # === Tab 3: 修改與盤點 (Fixed: eelem typo) ===
     with tab3:
         st.markdown("##### 🛠️ 修正或盤點")
         if not st.session_state['inventory'].empty:
@@ -411,7 +415,7 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
                         st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
                         st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem # 這裡修正為 eelem (正確變數名稱)
+                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem # 已修正變數名稱
                         st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
                         st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                         st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
@@ -494,7 +498,8 @@ if page == "📦 庫存管理與進貨":
     
     st.dataframe(disp_df, use_container_width=True, height=400,
                  column_config={
-                     "進貨總價": st.column_config.NumberColumn(format="$%d"),
+                     # 修改：統一顯示小數點後 2 位
+                     "進貨總價": st.column_config.NumberColumn(format="$%.2f"),
                      "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
                      "寬度mm": st.column_config.NumberColumn(format="%.1f"),
                      "長度mm": st.column_config.NumberColumn(format="%.1f")
@@ -577,7 +582,8 @@ elif page == "🧮 設計與成本計算":
                     with c1: st.write(item['編號'])
                     with c2: st.write(f"{item['名稱']} ({item['分類']})")
                     with c3: st.write(f"{item['形狀']} {item['規格']}")
-                    with c4: st.write(f"${item['單價']:.1f}")
+                    # 修改：小數點後 2 位
+                    with c4: st.write(f"${item['單價']:.2f}")
                     with c5: st.write(f"{item['數量']}")
                     with c6:
                         if st.button("🗑️", key=f"del_{i}"): rows_to_del.append(i)
@@ -600,13 +606,14 @@ elif page == "🧮 設計與成本計算":
                 
                 tot_qty = sum(x['數量'] for x in design_list)
                 
-                st.info(f"💎 材料費: ${mat_cost:.1f} + 工資: ${labor} + 雜支: ${misc}")
+                # 修改：小數點後 2 位
+                st.info(f"💎 材料費: ${mat_cost:.2f} + 工資: ${labor} + 雜支: ${misc}")
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總顆數", f"{tot_qty} 顆")
-                m2.metric("總成本 (成本價)", f"${total_cost_base:.1f}")
-                m3.metric("建議售價 (材料x3+工雜)", f"${price_x3:.0f}")
-                m4.metric("建議售價 (材料x5+工雜)", f"${price_x5:.0f}")
+                m2.metric("總成本 (成本價)", f"${total_cost_base:.2f}")
+                m3.metric("建議售價 (材料x3+工雜)", f"${price_x3:.2f}")
+                m4.metric("建議售價 (材料x5+工雜)", f"${price_x5:.2f}")
                 
                 st.divider()
                 
@@ -614,7 +621,8 @@ elif page == "🧮 設計與成本計算":
                 act_c1, act_c2 = st.columns([3, 1])
                 
                 with act_c1:
-                    st.caption(f"💡 參考：批發價(x2) ${total_cost_base*2:.0f}")
+                    # 修改：小數點後 2 位
+                    st.caption(f"💡 參考：批發價(x2) ${total_cost_base*2:.2f}")
                     sales_order_id = st.text_input("自訂訂單編號 (留空則自動產生)", placeholder="例如：蝦皮訂單號-241213")
                 
                 with act_c2:
