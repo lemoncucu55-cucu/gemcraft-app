@@ -90,9 +90,9 @@ def generate_new_id(category, df):
     return f"{prefix}{next_num:04d}"
 
 def merge_inventory_duplicates(df):
-    """合併重複項目 (加入 '進貨廠商' 作為判斷標準，不同廠商視為不同商品)"""
+    """合併重複項目 (已加入 '形狀' 作為判斷標準)"""
     if df.empty: return df, 0
-    # 修改：加入 '進貨廠商' 到分組依據
+    # 這裡加入 '形狀'，確保不同形狀不會被合併
     group_cols = ['分類', '名稱', '寬度mm', '長度mm', '形狀', '五行', '進貨廠商']
     
     if not set(group_cols).issubset(df.columns): return df, 0
@@ -113,7 +113,6 @@ def merge_inventory_duplicates(df):
     work_df['進貨日期_排序'] = pd.to_datetime(work_df['進貨日期'], errors='coerce')
     base_rows = work_df.sort_values(['進貨日期_排序', '編號'], ascending=[False, False]).groupby(group_cols, as_index=False).first()
     
-    # 修改：base_rows 取值時排除重複的 '進貨廠商' (因為它已經在 group_cols 裡了)
     final_df = pd.merge(agg, base_rows[['編號'] + group_cols], on=group_cols, how='left')
     
     return normalize_columns(final_df), original_count - len(final_df)
@@ -133,13 +132,17 @@ def make_inventory_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    return f"【{str(row['五行'])}】 {str(row['編號'])} | {str(row['名稱'])} | {shape_str} {size_disp} | 存:{row['庫存(顆)']}"
+    # 庫存管理頁面也加上廠商，方便補貨時區分
+    supplier = str(row.get('進貨廠商', '')).strip()
+    return f"【{str(row['五行'])}】 {str(row['編號'])} | {str(row['名稱'])} | {shape_str} {size_disp} | {supplier} | 存:{row['庫存(顆)']}"
 
 def make_design_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | ${float(row['單顆成本']):.2f}/顆 | 存:{row['庫存(顆)']}"
+    # 修改：加入廠商顯示，並維持價格小數點後 2 位
+    supplier = str(row.get('進貨廠商', '')).strip()
+    return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | {supplier} | ${float(row['單顆成本']):.2f}/顆 | 存:{row['庫存(顆)']}"
 
 def get_dynamic_options(column_name, default_list):
     options = set(default_list)
@@ -687,7 +690,7 @@ elif page == "🧮 設計與成本計算":
                 tot_qty = sum(x['數量'] for x in design_list)
                 
                 # 修改：小數點後 2 位
-                st.info(f"💎 材料費: ${mat_cost:.2f} + 工資: ${labor} +雜支: ${misc}")
+                st.info(f"💎 材料費: ${mat_cost:.2f} + 工資: ${labor} + 雜支: ${misc}")
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總顆數", f"{tot_qty} 顆")
