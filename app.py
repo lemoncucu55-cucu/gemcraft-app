@@ -55,24 +55,36 @@ def save_design_history():
     except Exception: pass
 
 def normalize_columns(df):
-    """標準化欄位名稱並強制修復數據格式 (增強版：解決空值與欄位對應問題)"""
+    """標準化欄位名稱並強制修復數據格式 (終極防呆版)"""
     
-    # 1. 清理欄位名稱 (移除前後空白，解決對應失敗問題)
-    df.columns = df.columns.astype(str).str.strip()
+    # 1. 清理欄位名稱：轉字串 -> 去除前後空白 -> 移除 BOM 亂碼
+    df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
 
-    # 2. 定義更廣泛的對應表 (中英對照)
+    # 2. 建立「同義詞字典」，不管 CSV 標題寫什麼，都對應回系統標準
     rename_map = {
-        '尺寸': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', 'Width': '寬度mm',
-        '長度': '長度mm', 'Length': '長度mm',
-        'Name': '名稱', 'Title': '名稱', 'Category': '分類', 'Type': '分類',
-        'Code': '編號', 'ID': '編號', 'No': '編號',
-        '尺寸規格': '備註規格', 'Shape': '形狀', 'Element': '五行',
-        'Cost': '單顆成本', 'Price': '進貨總價', 'Qty': '庫存(顆)', 'Stock': '庫存(顆)',
-        'Vendor': '進貨廠商', 'Supplier': '進貨廠商', 'Date': '進貨日期'
+        # 編號相關
+        'Code': '編號', 'ID': '編號', 'No': '編號', '編號 ': '編號',
+        # 分類相關
+        'Category': '分類', 'Type': '分類', '分類 ': '分類',
+        # 名稱相關
+        'Name': '名稱', 'Title': '名稱', 'Item': '名稱', '名稱 ': '名稱',
+        # 規格相關
+        'Width': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', '尺寸': '寬度mm',
+        'Length': '長度mm', '長度': '長度mm',
+        'Shape': '形狀', '形狀 ': '形狀',
+        'Element': '五行', '五行 ': '五行',
+        # 價格相關
+        'Price': '進貨總價', 'Cost': '進貨總價', 'Total': '進貨總價',
+        'Qty': '進貨數量(顆)', 'Quantity': '進貨數量(顆)',
+        'Date': '進貨日期',
+        'Vendor': '進貨廠商', 'Supplier': '進貨廠商', '廠商': '進貨廠商',
+        # 庫存相關
+        'Stock': '庫存(顆)', 'Current Stock': '庫存(顆)', '庫存': '庫存(顆)',
+        'Unit Cost': '單顆成本', 'Avg Cost': '單顆成本'
     }
     df = df.rename(columns=rename_map)
     
-    # 3. 補齊缺少的欄位 (但在補齊前，先確保既有資料不被覆蓋)
+    # 3. 補齊系統需要的其他欄位 (避免 KeyError)
     for col in COLUMNS:
         if col not in df.columns:
             # 如果是數值欄位，預設為 0
@@ -81,19 +93,20 @@ def normalize_columns(df):
             else:
                 df[col] = ""
             
-    # 4. 強制修復數值欄位 (解決 nan Error)
+    # 4. 強制轉型：數值欄位 (解決 nan Error)
     numeric_cols = ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # 5. 強制修復文字欄位
+    # 5. 強制轉型：文字欄位 (解決 AttributeError)
     text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
     for col in text_cols:
         if col in df.columns:
+            # 確保是字串，且去除 nan 和空白
             df[col] = df[col].astype(str).replace('nan', '').replace('None', '').str.strip()
 
-    # 只回傳系統需要的欄位
+    # 只回傳系統需要的標準欄位，過濾掉多餘的
     return df[COLUMNS]
 
 def generate_new_id(category, df):
@@ -140,7 +153,6 @@ def merge_inventory_duplicates(df):
     return normalize_columns(final_df), original_count - len(final_df)
 
 def format_size(row):
-    """將寬度與長度格式化為易讀字串"""
     try:
         w = float(row.get('寬度mm', 0))
         l = float(row.get('長度mm', 0))
@@ -185,7 +197,6 @@ if 'inventory' not in st.session_state:
             st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
-# 強制正規化 (確保資料一致性)
 if 'inventory' in st.session_state:
     st.session_state['inventory'] = normalize_columns(st.session_state['inventory'])
 
@@ -228,21 +239,19 @@ with st.sidebar:
         
     st.divider()
     
-    # ★★★ 修改：檔案上傳區加入「診斷預覽」功能 ★★★
+    # 上傳區 (包含診斷預覽)
     uploaded_inv = st.file_uploader("📤 上傳庫存備份 (CSV)", type=['csv'])
     if uploaded_inv:
         try:
             uploaded_inv.seek(0)
             try:
-                # 優先嘗試 utf-8-sig (Excel 標準)
                 raw_df = pd.read_csv(uploaded_inv, encoding='utf-8-sig')
             except:
-                # 失敗則嘗試 big5
                 uploaded_inv.seek(0)
                 raw_df = pd.read_csv(uploaded_inv, encoding='big5')
                 
-            st.info("📊 系統讀取到的原始檔案內容 (前 5 筆)：請確認這裡是否有資料")
-            st.dataframe(raw_df.head(), use_container_width=True) # 顯示原始資料供診斷
+            st.info("📊 系統預覽 (前 3 筆)：請確認資料是否正確顯示")
+            st.dataframe(raw_df.head(3), use_container_width=True) 
 
             if st.button("確認還原此檔案"):
                 st.session_state['inventory'] = normalize_columns(raw_df)
@@ -268,7 +277,6 @@ if page == "📦 庫存管理與進貨":
             inv_df['label'] = inv_df.apply(make_inventory_label, axis=1)
             target_label = st.selectbox("選擇商品", inv_df['label'].tolist())
             
-            # 安全查找
             target_rows = inv_df[inv_df['label'] == target_label]
             if not target_rows.empty:
                 target_row = target_rows.iloc[0]
@@ -302,10 +310,10 @@ if page == "📦 庫存管理與進貨":
                         save_inventory()
                         st.success("補貨成功！")
                         st.rerun()
-            else: st.warning("無法讀取此商品資料，請嘗試重新整理頁面。")
+            else: st.warning("無法讀取此商品資料，請重新整理。")
         else: st.info("無庫存")
 
-    # === Tab 2: 建立新商品 (含形狀) ===
+    # === Tab 2: 建立新商品 ===
     with tab2:
         with st.container():
             st.markdown("##### 1. 基本資料")
@@ -365,7 +373,6 @@ if page == "📦 庫存管理與進貨":
 
             c7, c8, c9 = st.columns(3)
             with c7: 
-                # 修改：允許小數點輸入
                 price = st.number_input("進貨總價", 0.0, format="%.2f")
             with c8: qty = st.number_input("進貨數量", 1)
             with c9: p_date = st.date_input("進貨日期", value=date.today())
@@ -410,7 +417,6 @@ if page == "📦 庫存管理與進貨":
             edit_df['label'] = edit_df.apply(make_inventory_label, axis=1)
             sel_label = st.selectbox("🔍 選擇要修改的商品", edit_df['label'].tolist())
             
-            # 安全資料檢索
             target_subset = edit_df[edit_df['label'] == sel_label]
             
             if not target_subset.empty:
@@ -450,19 +456,15 @@ if page == "📦 庫存管理與進貨":
 
                         st.divider()
                         ec7, ec8 = st.columns(2)
-                        
-                        # 這裡加入防呆，確保轉成 int 不會報錯
                         try:
                             old_qty = int(float(orig_row['庫存(顆)']))
-                        except:
-                            old_qty = 0
+                        except: old_qty = 0
 
                         with ec7: 
                             estock = st.number_input(f"庫存數量 (盤點前: {old_qty})", value=old_qty, step=1)
                         with ec8: 
                             ecost = st.number_input("單顆成本", value=float(orig_row['單顆成本']), step=0.1, format="%.2f")
 
-                        # 計算差異 (新 - 舊)
                         qty_diff = estock - old_qty
                         if qty_diff != 0:
                             st.caption(f"⚠️ 庫存將調整: {qty_diff:+d} 顆")
@@ -479,7 +481,6 @@ if page == "📦 庫存管理與進貨":
                                 st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
                                 st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
                                 
-                                # === 判斷是用於「盤點修正」還是單純「資料修改」 ===
                                 if qty_diff != 0:
                                     action_type = '盤點修正'
                                     action_note = f"盤點調整 {qty_diff:+d}"
@@ -502,11 +503,7 @@ if page == "📦 庫存管理與進貨":
                                 st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                                 save_inventory()
                                 
-                                if qty_diff != 0:
-                                    st.success(f"✅ 盤點完成！庫存已修正 ({qty_diff:+d})")
-                                else:
-                                    st.success("✅ 資料更新成功")
-                                    
+                                st.success("✅ 更新成功")
                                 time.sleep(1)
                                 st.rerun()
 
@@ -517,10 +514,8 @@ if page == "📦 庫存管理與進貨":
                                 st.success("已刪除")
                                 time.sleep(1)
                                 st.rerun()
-                else:
-                    st.warning("⚠️ 查無此商品資料 (可能因資料還原導致索引變更)，請嘗試重新整理頁面。")
-            else:
-                st.info("請選擇要編輯的商品")
+                else: st.warning("⚠️ 查無此商品")
+            else: st.info("請選擇要編輯的商品")
         else: st.info("無資料")
 
     st.divider()
@@ -535,30 +530,18 @@ if page == "📦 庫存管理與進貨":
             time.sleep(1)
             st.rerun()
 
-    # 搜尋與顯示庫存
+    # 搜尋與顯示
     df_source = st.session_state.get('inventory', pd.DataFrame())
-    
-    # === 自動排序邏輯 ===
     if not df_source.empty:
-        # 依照：分類 -> 名稱 -> 寬度 -> 編號 進行升冪排序
         df_source = df_source.sort_values(
             by=['分類', '名稱', '寬度mm', '編號'],
             ascending=[True, True, True, True]
         ).reset_index(drop=True)
-    # ==========================
 
-    # 搜尋邏輯
-    try:
-        search_options = sorted(list(set(df_source.astype(str).values.flatten())))
-        search_options = [x for x in search_options if x not in ['nan', '', 'None']]
-    except:
-        search_options = []
+    search_options = sorted(list(set(df_source.astype(str).values.flatten())))
+    search_options = [x for x in search_options if x not in ['nan', '', 'None']]
     
-    selected_tags = st.multiselect(
-        "🔍 萬用搜尋 (可多選/輸入關鍵字)", 
-        options=search_options,
-        placeholder="輸入編號、廠商或形狀..."
-    )
+    selected_tags = st.multiselect("🔍 萬用搜尋", options=search_options)
     
     if selected_tags and not df_source.empty:
         mask = df_source.astype(str).apply(
@@ -570,7 +553,6 @@ if page == "📦 庫存管理與進貨":
     
     st.dataframe(disp_df, use_container_width=True, height=400,
                  column_config={
-                     # 修改：統一顯示小數點後 2 位
                      "進貨總價": st.column_config.NumberColumn(format="$%.2f"),
                      "單顆成本": st.column_config.NumberColumn(format="$%.2f"),
                      "寬度mm": st.column_config.NumberColumn(format="%.1f"),
@@ -587,37 +569,29 @@ elif page == "📜 進貨紀錄查詢":
     with tab_log:
         df_log = st.session_state['history'].copy()
         
-        # 調整欄位順序
         cols = df_log.columns.tolist()
         if '單號' in cols:
             cols.remove('單號')
             cols.insert(1, '單號')
         df_log = df_log[cols]
 
-        # 插入刪除勾選欄位
         df_log.insert(0, "刪除", False)
 
         edited_df = st.data_editor(
             df_log,
             column_config={
-                "刪除": st.column_config.CheckboxColumn(
-                    "選取刪除",
-                    help="勾選並按下方按鈕以刪除紀錄並還原庫存",
-                    default=False,
-                )
+                "刪除": st.column_config.CheckboxColumn("選取刪除", default=False)
             },
             disabled=cols, 
             use_container_width=True,
             key="history_editor"
         )
 
-        # 刪除並還原按鈕
         if st.button("🗑️ 刪除選取的紀錄 (並還原庫存)", type="primary"):
             rows_to_delete = edited_df[edited_df['刪除']]
             
             if not rows_to_delete.empty:
                 updated_items = []
-                # 遍歷要刪除的紀錄進行還原
                 for index, row in rows_to_delete.iterrows():
                     target_id = row['編號']
                     qty_change = float(row['進貨數量'])
@@ -627,47 +601,25 @@ elif page == "📜 進貨紀錄查詢":
                     if mask.any():
                         idx = st.session_state['inventory'][mask].index[0]
                         current_qty = float(st.session_state['inventory'].at[idx, '庫存(顆)'])
-                        current_cost = float(st.session_state['inventory'].at[idx, '單顆成本'])
                         
-                        # 計算當前總值
-                        current_total_value = current_qty * current_cost
-                        
-                        # 還原邏輯：
-                        # 如果原本是 +10 (補貨)，現在要 -10
-                        # 如果原本是 -5 (售出)，現在要 +5 (即減去負數)
+                        # 簡單估算還原
                         new_qty = current_qty - qty_change
-                        
-                        # 還原成本邏輯：
-                        if qty_change > 0: # 刪除補貨紀錄 (扣除成本)
-                             new_total_value = current_total_value - cost_change
-                        else: # 刪除售出紀錄 (加回價值，使用當時記錄的單價)
-                             logged_unit_cost = float(row['單價'])
-                             new_total_value = current_total_value + (abs(qty_change) * logged_unit_cost)
-                        
-                        # 防止除以零
-                        new_unit_cost = new_total_value / new_qty if new_qty > 0 else 0
-                        
-                        # 寫回庫存
                         st.session_state['inventory'].at[idx, '庫存(顆)'] = new_qty if new_qty >= 0 else 0
-                        st.session_state['inventory'].at[idx, '單顆成本'] = new_unit_cost
                         updated_items.append(f"{row['名稱']}")
 
-                # 更新歷史紀錄 (只保留沒被勾選的)
                 rows_to_keep = edited_df[~edited_df['刪除']][cols]
                 st.session_state['history'] = rows_to_keep
                 
                 save_inventory()
-                st.success(f"✅ 已刪除 {len(rows_to_delete)} 筆紀錄，並還原庫存：{', '.join(updated_items)}")
+                st.success(f"✅ 已刪除並還原：{', '.join(updated_items)}")
                 time.sleep(2)
                 st.rerun()
-            else:
-                st.warning("⚠️ 請先勾選要刪除的項目")
         
     with tab_sales:
         st.dataframe(st.session_state['design_history'], use_container_width=True)
 
 # ------------------------------------------
-# 頁面 C: 設計與成本
+# 頁面 C: 設計與成本 (FIXED: 冒號修正)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 手鍊設計成本試算")
@@ -675,7 +627,6 @@ elif page == "🧮 設計與成本計算":
 
     if not all_items.empty:
         uniq_ele = sorted(all_items['五行'].astype(str).unique().tolist())
-        st.write("👇 **第一步：選擇五行屬性 (可複選)**")
         sel_ele = st.multiselect("五行", uniq_ele, default=uniq_ele)
         if not sel_ele: sel_ele = uniq_ele
         
@@ -683,4 +634,100 @@ elif page == "🧮 設計與成本計算":
 
         st.divider()
 
-        if not filt_items
+        # ★★★ 修正點：加上了冒號 (:) ★★★
+        if not filt_items.empty:
+            filt_items['disp_label'] = filt_items.apply(make_design_label, axis=1)
+            
+            c_sel, c_qty, c_btn = st.columns([3, 1, 1])
+            with c_sel:
+                sel_label = st.selectbox("👇 選擇珠子", filt_items['disp_label'].tolist())
+            with c_qty:
+                in_qty = st.number_input("數量", min_value=1, value=1)
+            with c_btn:
+                st.write("") 
+                st.write("") 
+                if st.button("⬇️ 加入", use_container_width=True, type="primary"):
+                    row = filt_items[filt_items['disp_label'] == sel_label].iloc[0]
+                    subtotal = row['單顆成本'] * in_qty
+                    st.session_state['current_design'].append({
+                        '編號': row['編號'], '分類': row['五行'], '名稱': row['名稱'],
+                        '形狀': row['形狀'], '規格': format_size(row),
+                        '單價': row['單顆成本'], '數量': in_qty, '小計': subtotal
+                    })
+                    st.success("已加入")
+
+            st.divider()
+            
+            if st.session_state['current_design']:
+                # 設計清單顯示邏輯...
+                design_list = st.session_state['current_design']
+                rows_to_del = []
+                mat_cost = 0
+
+                for i, item in enumerate(design_list):
+                    c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+                    with c1: st.write(f"{item['名稱']} ({item['規格']})")
+                    with c2: st.write(f"${item['單價']:.2f} x {item['數量']}")
+                    with c3: st.write(f"= ${item['小計']:.2f}")
+                    with c4: 
+                        if st.button("🗑️", key=f"del_{i}"): rows_to_del.append(i)
+                    mat_cost += item['小計']
+
+                if rows_to_del:
+                    for i in sorted(rows_to_del, reverse=True):
+                        del st.session_state['current_design'][i]
+                    st.rerun()
+
+                st.divider()
+                lc, mc = st.columns(2)
+                with lc: labor = st.number_input("工資 ($)", 0, step=10)
+                with mc: misc = st.number_input("雜支 ($)", 0, step=5)
+
+                total_cost = mat_cost + labor + misc
+                st.info(f"總成本: ${total_cost:.2f}")
+                
+                # 售出結帳邏輯
+                if st.button("✅ 確定售出 (扣庫存)", type="primary"):
+                    sales_order_id = f"S-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                    detail_str = []
+                    
+                    for item in design_list:
+                        mask = st.session_state['inventory']['編號'] == item['編號']
+                        if mask.any():
+                            idx = st.session_state['inventory'][mask].index[0]
+                            current = st.session_state['inventory'].at[idx, '庫存(顆)']
+                            st.session_state['inventory'].at[idx, '庫存(顆)'] = current - item['數量']
+                            detail_str.append(f"{item['名稱']}x{item['數量']}")
+                            
+                            # 寫入流水帳
+                            log = {
+                                '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                '單號': sales_order_id, '動作': '售出使用',
+                                '編號': item['編號'], '分類': item['分類'], '名稱': item['名稱'],
+                                '規格': item['規格'], '廠商': '售出', 
+                                '進貨數量': -item['數量'], '進貨總價': 0, '單價': item['單價']
+                            }
+                            st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+
+                    # 寫入訂單紀錄
+                    d_log = {
+                        '單號': sales_order_id, '日期': date.today(), 
+                        '總顆數': sum(x['數量'] for x in design_list),
+                        '材料成本': mat_cost, '工資': labor, '雜支': misc,
+                        '總成本': total_cost, '售價(x3)': 0, '售價(x5)': 0, 
+                        '明細內容': " | ".join(detail_str)
+                    }
+                    st.session_state['design_history'] = pd.concat([st.session_state['design_history'], pd.DataFrame([d_log])], ignore_index=True)
+                    
+                    save_inventory()
+                    save_design_history()
+                    st.session_state['current_design'] = []
+                    st.success("售出成功！")
+                    time.sleep(1)
+                    st.rerun()
+            else:
+                st.info("尚未加入任何配件。")
+        else:
+            st.warning("查無符合條件的庫存。")
+    else:
+        st.info("庫存為空。")
