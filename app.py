@@ -56,6 +56,10 @@ def save_design_history():
 
 def normalize_columns(df):
     """標準化欄位名稱並強制修復數據格式 (防呆核心)"""
+    
+    # 0. 清理欄位名稱 (移除可能存在的空白或 BOM 亂碼)
+    df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
+
     rename_map = {
         '尺寸': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', 'Width': '寬度mm',
         '長度': '長度mm', 'Length': '長度mm',
@@ -79,7 +83,7 @@ def normalize_columns(df):
     text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
     for col in text_cols:
         if col in df.columns:
-            # 這裡修正為 .str.strip()
+            # 轉為字串 -> 替換 nan -> 去除前後空白
             df[col] = df[col].astype(str).replace('nan', '').replace('None', '').str.strip()
 
     return df[COLUMNS]
@@ -167,9 +171,11 @@ def get_dynamic_options(column_name, default_list):
 if 'inventory' not in st.session_state:
     if os.path.exists(DEFAULT_CSV_FILE):
         try:
-            df = pd.read_csv(DEFAULT_CSV_FILE)
+            # 嘗試用 utf-8-sig 讀取 (解決 Excel 亂碼)
+            df = pd.read_csv(DEFAULT_CSV_FILE, encoding='utf-8-sig')
             st.session_state['inventory'] = normalize_columns(df)
-        except: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+        except:
+            st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
 # 強制正規化 (確保資料一致性)
@@ -185,7 +191,7 @@ else:
 if 'design_history' not in st.session_state:
     if os.path.exists(DESIGN_HISTORY_FILE):
         try:
-            st.session_state['design_history'] = pd.read_csv(DESIGN_HISTORY_FILE)
+            st.session_state['design_history'] = pd.read_csv(DESIGN_HISTORY_FILE, encoding='utf-8-sig')
         except: st.session_state['design_history'] = pd.DataFrame(columns=DESIGN_HISTORY_COLUMNS)
     else: st.session_state['design_history'] = pd.DataFrame(columns=DESIGN_HISTORY_COLUMNS)
 
@@ -214,14 +220,24 @@ with st.sidebar:
         st.download_button("📥 下載訂單售出紀錄 (CSV)", d_csv, f'sales_{date.today()}.csv', "text/csv")
         
     st.divider()
+    
+    # ★★★ 修改：增強版檔案上傳邏輯 ★★★
     uploaded_inv = st.file_uploader("📤 上傳庫存備份 (CSV)", type=['csv'])
     if uploaded_inv:
         try:
-            df = pd.read_csv(uploaded_inv)
+            uploaded_inv.seek(0) # 確保從頭讀取
+            try:
+                # 優先嘗試 utf-8-sig (Excel 標準)
+                df = pd.read_csv(uploaded_inv, encoding='utf-8-sig')
+            except:
+                # 失敗則嘗試 big5 (舊版 Excel)
+                uploaded_inv.seek(0)
+                df = pd.read_csv(uploaded_inv, encoding='big5')
+                
             # 這裡進行強制正規化，修復所有空值問題
             st.session_state['inventory'] = normalize_columns(df)
             save_inventory()
-            st.success("✅ 庫存還原成功！已自動修復格式錯誤。")
+            st.success("✅ 庫存還原成功！已自動修復格式與編碼。")
             time.sleep(1)
             st.rerun()
         except Exception as e: st.error(f"讀取失敗: {e}")
