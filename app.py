@@ -55,7 +55,7 @@ def save_design_history():
     except Exception: pass
 
 def normalize_columns(df):
-    """標準化欄位名稱並移除舊的多餘欄位"""
+    """標準化欄位名稱並移除舊的多餘欄位 (加強型)"""
     rename_map = {
         '尺寸': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', 'Width': '寬度mm',
         '長度': '長度mm', 'Length': '長度mm',
@@ -71,6 +71,13 @@ def normalize_columns(df):
                 df[col] = 0
             else:
                 df[col] = ""
+    
+    # ★★★ 強制轉型：確保關鍵欄位是字串，避免 Index Error ★★★
+    text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
+    for c in text_cols:
+        if c in df.columns:
+            df[c] = df[c].astype(str).replace('nan', '').replace('None', '')
+
     return df[COLUMNS]
 
 def generate_new_id(category, df):
@@ -132,7 +139,6 @@ def make_inventory_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    # 庫存管理頁面也加上廠商，方便補貨時區分
     supplier = str(row.get('進貨廠商', '')).strip()
     return f"【{str(row['五行'])}】 {str(row['編號'])} | {str(row['名稱'])} | {shape_str} {size_disp} | {supplier} | 存:{row['庫存(顆)']}"
 
@@ -140,7 +146,6 @@ def make_design_label(row):
     size_str = format_size(row)
     size_disp = f"({size_str})" if size_str else ""
     shape_str = str(row.get('形狀', '')).strip()
-    # 修改：加入廠商顯示，並維持價格小數點後 2 位
     supplier = str(row.get('進貨廠商', '')).strip()
     return f"【{str(row['五行'])}】{str(row['名稱'])} | {shape_str} {size_disp} | {supplier} | ${float(row['單顆成本']):.2f}/顆 | 存:{row['庫存(顆)']}"
 
@@ -210,6 +215,7 @@ with st.sidebar:
     if uploaded_inv:
         try:
             df = pd.read_csv(uploaded_inv)
+            # 這裡進行強制正規化，防止欄位錯誤
             st.session_state['inventory'] = normalize_columns(df)
             save_inventory()
             st.success("庫存還原成功！")
@@ -230,37 +236,42 @@ if page == "📦 庫存管理與進貨":
         if not inv_df.empty:
             inv_df['label'] = inv_df.apply(make_inventory_label, axis=1)
             target_label = st.selectbox("選擇商品", inv_df['label'].tolist())
-            target_row = inv_df[inv_df['label'] == target_label].iloc[0]
-            target_idx = inv_df[inv_df['label'] == target_label].index[0]
             
-            with st.form("restock"):
-                st.write(f"目前庫存: **{target_row['庫存(顆)']}**")
-                batch_no = st.text_input("進貨單號 (選填)", placeholder="Auto")
-                c1, c2 = st.columns(2)
-                qty = c1.number_input("進貨數量", 1)
-                cost = c2.number_input("進貨總價", 0.0, format="%.2f")
+            # 安全查找
+            target_rows = inv_df[inv_df['label'] == target_label]
+            if not target_rows.empty:
+                target_row = target_rows.iloc[0]
+                target_idx = target_rows.index[0]
                 
-                if st.form_submit_button("📦 確認補貨"):
-                    new_qty = target_row['庫存(顆)'] + qty
-                    old_val = target_row['庫存(顆)'] * target_row['單顆成本']
-                    new_avg = (old_val + cost) / new_qty if new_qty > 0 else 0
+                with st.form("restock"):
+                    st.write(f"目前庫存: **{target_row['庫存(顆)']}**")
+                    batch_no = st.text_input("進貨單號 (選填)", placeholder="Auto")
+                    c1, c2 = st.columns(2)
+                    qty = c1.number_input("進貨數量", 1)
+                    cost = c2.number_input("進貨總價", 0.0, format="%.2f")
                     
-                    st.session_state['inventory'].at[target_idx, '庫存(顆)'] = new_qty
-                    st.session_state['inventory'].at[target_idx, '單顆成本'] = new_avg
-                    st.session_state['inventory'].at[target_idx, '進貨日期'] = date.today()
-                    
-                    log = {
-                        '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        '單號': batch_no if batch_no else f"AUTO-{int(time.time())}",
-                        '動作': '補貨',
-                        '編號': target_row['編號'], '分類': target_row['分類'], '名稱': target_row['名稱'],
-                        '規格': format_size(target_row), '廠商': target_row['進貨廠商'],
-                        '進貨數量': qty, '進貨總價': cost, '單價': cost/qty if qty>0 else 0
-                    }
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_inventory()
-                    st.success("補貨成功！")
-                    st.rerun()
+                    if st.form_submit_button("📦 確認補貨"):
+                        new_qty = target_row['庫存(顆)'] + qty
+                        old_val = target_row['庫存(顆)'] * target_row['單顆成本']
+                        new_avg = (old_val + cost) / new_qty if new_qty > 0 else 0
+                        
+                        st.session_state['inventory'].at[target_idx, '庫存(顆)'] = new_qty
+                        st.session_state['inventory'].at[target_idx, '單顆成本'] = new_avg
+                        st.session_state['inventory'].at[target_idx, '進貨日期'] = date.today()
+                        
+                        log = {
+                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            '單號': batch_no if batch_no else f"AUTO-{int(time.time())}",
+                            '動作': '補貨',
+                            '編號': target_row['編號'], '分類': target_row['分類'], '名稱': target_row['名稱'],
+                            '規格': format_size(target_row), '廠商': target_row['進貨廠商'],
+                            '進貨數量': qty, '進貨總價': cost, '單價': cost/qty if qty>0 else 0
+                        }
+                        st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                        save_inventory()
+                        st.success("補貨成功！")
+                        st.rerun()
+            else: st.warning("無法讀取此商品資料，請嘗試重新整理頁面。")
         else: st.info("無庫存")
 
     # === Tab 2: 建立新商品 (含形狀) ===
@@ -367,99 +378,114 @@ if page == "📦 庫存管理與進貨":
             edit_df = st.session_state['inventory'].copy()
             edit_df['label'] = edit_df.apply(make_inventory_label, axis=1)
             sel_label = st.selectbox("🔍 選擇要修改的商品", edit_df['label'].tolist())
-            orig_row = edit_df[edit_df['label'] == sel_label].iloc[0]
-            orig_idx = st.session_state['inventory'][st.session_state['inventory']['編號'] == orig_row['編號']].index[0]
-
-            with st.form("edit_form"):
-                st.info(f"編輯中：{orig_row['編號']}")
-                ec1, ec2, ec3 = st.columns(3)
-                with ec1: ename = st.text_input("名稱", value=orig_row['名稱'])
-                with ec2: ewidth = st.number_input("寬度mm", value=float(orig_row['寬度mm']), step=0.1)
-                with ec3: elength = st.number_input("長度mm", value=float(orig_row['長度mm']), step=0.1)
-
-                shp_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
-                elm_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
-                sup_opts = get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS)
+            
+            # ★★★ 修正點：使用安全的資料檢索方式 ★★★
+            target_subset = edit_df[edit_df['label'] == sel_label]
+            
+            if not target_subset.empty:
+                orig_row = target_subset.iloc[0]
+                target_id = orig_row['編號']
                 
-                def get_eidx(opts, val):
-                    try: return opts.index(val)
-                    except: return 0
+                # 再次在主資料庫中確認該編號存在 (防呆機制)
+                matching_inv = st.session_state['inventory'][st.session_state['inventory']['編號'] == target_id]
+                
+                if not matching_inv.empty:
+                    orig_idx = matching_inv.index[0]
 
-                ec4, ec5, ec6 = st.columns(3)
-                current_shape = orig_row['形狀'] if '形狀' in orig_row else ''
-                with ec4: eshp_sel = st.selectbox("形狀", shp_opts, index=get_eidx(shp_opts, current_shape))
-                with ec5: eelm_sel = st.selectbox("五行", elm_opts, index=get_eidx(elm_opts, orig_row['五行']))
-                with ec6: esup_sel = st.selectbox("廠商", sup_opts, index=get_eidx(sup_opts, orig_row['進貨廠商']))
+                    with st.form("edit_form"):
+                        st.info(f"編輯中：{orig_row['編號']}")
+                        ec1, ec2, ec3 = st.columns(3)
+                        with ec1: ename = st.text_input("名稱", value=orig_row['名稱'])
+                        with ec2: ewidth = st.number_input("寬度mm", value=float(orig_row['寬度mm']), step=0.1)
+                        with ec3: elength = st.number_input("長度mm", value=float(orig_row['長度mm']), step=0.1)
 
-                em1, em2, em3 = st.columns(3)
-                eshape = em1.text_input("↳ 新形狀") if eshp_sel == "➕ 手動輸入/新增" else eshp_sel
-                eelem = em2.text_input("↳ 新五行") if eelm_sel == "➕ 手動輸入/新增" else eelm_sel
-                esup = em3.text_input("↳ 新廠商") if esup_sel == "➕ 手動輸入/新增" else esup_sel
-
-                st.divider()
-                ec7, ec8 = st.columns(2)
-                # 這裡記錄原本的庫存，用來比對
-                old_qty = int(orig_row['庫存(顆)'])
-                with ec7: 
-                    estock = st.number_input(f"庫存數量 (盤點前: {old_qty})", value=old_qty, step=1)
-                with ec8: 
-                    ecost = st.number_input("單顆成本", value=float(orig_row['單顆成本']), step=0.1, format="%.2f")
-
-                # 計算差異 (新 - 舊)
-                qty_diff = estock - old_qty
-                if qty_diff != 0:
-                    st.caption(f"⚠️ 庫存將調整: {qty_diff:+d} 顆")
-
-                bt1, bt2 = st.columns([1, 1])
-                with bt1:
-                    if st.form_submit_button("💾 儲存修改 / 確認盤點"):
-                        st.session_state['inventory'].at[orig_idx, '名稱'] = ename
-                        st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
-                        st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
-                        st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
-                        st.session_state['inventory'].at[orig_idx, '五行'] = eelem
-                        st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
-                        st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
-                        st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
+                        shp_opts = get_dynamic_options('形狀', DEFAULT_SHAPES)
+                        elm_opts = get_dynamic_options('五行', DEFAULT_ELEMENTS)
+                        sup_opts = get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS)
                         
-                        # === 判斷是用於「盤點修正」還是單純「資料修改」 ===
-                        if qty_diff != 0:
-                            action_type = '盤點修正'
-                            action_note = f"盤點調整 {qty_diff:+d}"
-                        else:
-                            action_type = '資料更新'
-                            action_note = "修改資料內容"
+                        def get_eidx(opts, val):
+                            try: return opts.index(val)
+                            except: return 0
 
-                        log = {
-                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
-                            '單號': 'AUDIT' if qty_diff != 0 else 'EDIT', 
-                            '動作': action_type,
-                            '編號': orig_row['編號'], '分類': orig_row['分類'], '名稱': ename,
-                            '規格': f"{ewidth}x{elength}mm ({action_note})", 
-                            '形狀': eshape,
-                            '廠商': esup, 
-                            '進貨數量': qty_diff, 
-                            '進貨總價': 0, 
-                            '單價': ecost
-                        }
-                        st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                        save_inventory()
-                        
-                        if qty_diff != 0:
-                            st.success(f"✅ 盤點完成！庫存已修正 ({qty_diff:+d})")
-                        else:
-                            st.success("✅ 資料更新成功")
-                            
-                        time.sleep(1)
-                        st.rerun()
+                        ec4, ec5, ec6 = st.columns(3)
+                        current_shape = orig_row['形狀'] if '形狀' in orig_row else ''
+                        with ec4: eshp_sel = st.selectbox("形狀", shp_opts, index=get_eidx(shp_opts, current_shape))
+                        with ec5: eelm_sel = st.selectbox("五行", elm_opts, index=get_eidx(elm_opts, orig_row['五行']))
+                        with ec6: esup_sel = st.selectbox("廠商", sup_opts, index=get_eidx(sup_opts, orig_row['進貨廠商']))
 
-                with bt2:
-                    if st.form_submit_button("🗑️ 刪除商品", type="primary"):
-                        st.session_state['inventory'] = st.session_state['inventory'].drop(orig_idx).reset_index(drop=True)
-                        save_inventory()
-                        st.success("已刪除")
-                        time.sleep(1)
-                        st.rerun()
+                        em1, em2, em3 = st.columns(3)
+                        eshape = em1.text_input("↳ 新形狀") if eshp_sel == "➕ 手動輸入/新增" else eshp_sel
+                        eelem = em2.text_input("↳ 新五行") if eelm_sel == "➕ 手動輸入/新增" else eelm_sel
+                        esup = em3.text_input("↳ 新廠商") if esup_sel == "➕ 手動輸入/新增" else esup_sel
+
+                        st.divider()
+                        ec7, ec8 = st.columns(2)
+                        # 這裡記錄原本的庫存，用來比對
+                        old_qty = int(orig_row['庫存(顆)'])
+                        with ec7: 
+                            estock = st.number_input(f"庫存數量 (盤點前: {old_qty})", value=old_qty, step=1)
+                        with ec8: 
+                            ecost = st.number_input("單顆成本", value=float(orig_row['單顆成本']), step=0.1, format="%.2f")
+
+                        # 計算差異 (新 - 舊)
+                        qty_diff = estock - old_qty
+                        if qty_diff != 0:
+                            st.caption(f"⚠️ 庫存將調整: {qty_diff:+d} 顆")
+
+                        bt1, bt2 = st.columns([1, 1])
+                        with bt1:
+                            if st.form_submit_button("💾 儲存修改 / 確認盤點"):
+                                st.session_state['inventory'].at[orig_idx, '名稱'] = ename
+                                st.session_state['inventory'].at[orig_idx, '寬度mm'] = ewidth
+                                st.session_state['inventory'].at[orig_idx, '長度mm'] = elength
+                                st.session_state['inventory'].at[orig_idx, '形狀'] = eshape
+                                st.session_state['inventory'].at[orig_idx, '五行'] = eelem
+                                st.session_state['inventory'].at[orig_idx, '進貨廠商'] = esup
+                                st.session_state['inventory'].at[orig_idx, '庫存(顆)'] = estock
+                                st.session_state['inventory'].at[orig_idx, '單顆成本'] = ecost
+                                
+                                # === 判斷是用於「盤點修正」還是單純「資料修改」 ===
+                                if qty_diff != 0:
+                                    action_type = '盤點修正'
+                                    action_note = f"盤點調整 {qty_diff:+d}"
+                                else:
+                                    action_type = '資料更新'
+                                    action_note = "修改資料內容"
+
+                                log = {
+                                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                    '單號': 'AUDIT' if qty_diff != 0 else 'EDIT', 
+                                    '動作': action_type,
+                                    '編號': orig_row['編號'], '分類': orig_row['分類'], '名稱': ename,
+                                    '規格': f"{ewidth}x{elength}mm ({action_note})", 
+                                    '形狀': eshape,
+                                    '廠商': esup, 
+                                    '進貨數量': qty_diff, 
+                                    '進貨總價': 0, 
+                                    '單價': ecost
+                                }
+                                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                                save_inventory()
+                                
+                                if qty_diff != 0:
+                                    st.success(f"✅ 盤點完成！庫存已修正 ({qty_diff:+d})")
+                                else:
+                                    st.success("✅ 資料更新成功")
+                                    
+                                time.sleep(1)
+                                st.rerun()
+
+                        with bt2:
+                            if st.form_submit_button("🗑️ 刪除商品", type="primary"):
+                                st.session_state['inventory'] = st.session_state['inventory'].drop(orig_idx).reset_index(drop=True)
+                                save_inventory()
+                                st.success("已刪除")
+                                time.sleep(1)
+                                st.rerun()
+                else:
+                    st.warning("⚠️ 查無此商品資料 (可能因資料還原導致索引變更)，請嘗試重新整理頁面。")
+            else:
+                st.info("請選擇要編輯的商品")
         else: st.info("無資料")
 
     st.divider()
