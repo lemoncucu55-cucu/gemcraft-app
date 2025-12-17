@@ -55,31 +55,36 @@ def save_design_history():
     except Exception: pass
 
 def normalize_columns(df):
-    """標準化欄位名稱並強制修復數據格式"""
+    """標準化欄位名稱 (最穩定版本，不依賴 pandas 版本)"""
     
-    # 1. 清理欄位名稱：轉字串 -> 去除前後空白 -> 移除 BOM 亂碼
-    df.columns = df.columns.astype(str).str.strip().str.replace('\ufeff', '')
+    # 1. 【關鍵修復】使用 Python 原生語法清理欄位，避免 AttributeError
+    # 強制將所有欄位轉為字串，去除前後空白，去除 BOM 標記
+    clean_cols = []
+    for col in df.columns:
+        clean_col = str(col).strip().replace('\ufeff', '')
+        clean_cols.append(clean_col)
+    df.columns = clean_cols
 
-    # 2. 建立「同義詞字典」，不管 CSV 標題寫什麼，都對應回系統標準
+    # 2. 建立「同義詞對照表」 (容錯對應)
     rename_map = {
         # 編號
-        'Code': '編號', 'ID': '編號', 'No': '編號', '編號 ': '編號', 'Product ID': '編號',
+        'Code': '編號', 'ID': '編號', 'No': '編號', 'Product ID': '編號',
         # 分類
-        'Category': '分類', 'Type': '分類', '分類 ': '分類',
+        'Category': '分類', 'Type': '分類',
         # 名稱
-        'Name': '名稱', 'Title': '名稱', 'Item': '名稱', '名稱 ': '名稱', 'Product Name': '名稱',
+        'Name': '名稱', 'Title': '名稱', 'Item': '名稱', 'Product Name': '名稱',
         # 規格
         'Width': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', '尺寸': '寬度mm',
         'Length': '長度mm', '長度': '長度mm',
-        'Shape': '形狀', '形狀 ': '形狀',
-        'Element': '五行', '五行 ': '五行',
+        'Shape': '形狀', 'Element': '五行',
         # 價格與數量
-        'Price': '進貨總價', 'Cost': '進貨總價', 'Total': '進貨總價', '進貨總價 ': '進貨總價',
+        'Price': '進貨總價', 'Cost': '進貨總價', 'Total': '進貨總價',
         'Qty': '進貨數量(顆)', 'Quantity': '進貨數量(顆)', 'Amount': '進貨數量(顆)',
         'Date': '進貨日期',
         'Vendor': '進貨廠商', 'Supplier': '進貨廠商', '廠商': '進貨廠商',
+        # 庫存
         'Stock': '庫存(顆)', 'Current Stock': '庫存(顆)', '庫存': '庫存(顆)',
-        'Unit Cost': '單顆成本', 'Avg Cost': '單顆成本'
+        'Unit Cost': '單顆成本', 'Avg Cost': '單顆成本', 'Cost per unit': '單顆成本'
     }
     df = df.rename(columns=rename_map)
     
@@ -91,17 +96,17 @@ def normalize_columns(df):
             else:
                 df[col] = ""
             
-    # 4. 強制轉型：數值欄位
+    # 4. 數據格式修復 (轉數字)
     numeric_cols = ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # 5. 強制轉型：文字欄位
+    # 5. 數據格式修復 (轉文字)
     text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
     for col in text_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).replace('nan', '').replace('None', '').str.strip()
+            df[col] = df[col].astype(str).replace('nan', '').replace('None', '').apply(lambda x: x.strip())
 
     return df[COLUMNS]
 
@@ -227,38 +232,35 @@ with st.sidebar:
         
     st.divider()
     
-    # 檔案上傳區
+    # ★★★ 修改：診斷式上傳區 ★★★
     uploaded_inv = st.file_uploader("📤 上傳庫存備份 (CSV)", type=['csv'])
+    
     if uploaded_inv:
+        # 先讀取看看，不做任何處理
         try:
             uploaded_inv.seek(0)
             try:
-                # 1. 嘗試 utf-8-sig (Excel 標準)
-                raw_df = pd.read_csv(uploaded_inv, encoding='utf-8-sig')
+                debug_df = pd.read_csv(uploaded_inv, encoding='utf-8-sig')
             except:
                 uploaded_inv.seek(0)
-                try:
-                    # 2. 嘗試 big5 (中文舊版)
-                    raw_df = pd.read_csv(uploaded_inv, encoding='big5')
-                except:
-                    uploaded_inv.seek(0)
-                    # 3. 嘗試 default engine='python'
-                    raw_df = pd.read_csv(uploaded_inv, engine='python')
-            
-            with st.expander("📊 檔案診斷報告 (若資料空白請點開檢查)", expanded=True):
-                st.warning("請檢查下方的「原始欄位名稱」是否正確顯示中文？")
-                st.write("**電腦讀取到的欄位名稱：**", raw_df.columns.tolist())
-                st.write("**檔案前 3 筆資料預覽：**")
-                st.dataframe(raw_df.head(3), use_container_width=True)
-
-            if st.button("確認還原此檔案"):
-                st.session_state['inventory'] = normalize_columns(raw_df)
+                debug_df = pd.read_csv(uploaded_inv, encoding='big5')
+                
+            # 診斷資訊區
+            with st.expander("🛠️ 點此查看檔案內容診斷", expanded=False):
+                st.write("系統讀到的欄位名稱：", debug_df.columns.tolist())
+                st.write("前 3 筆資料：")
+                st.dataframe(debug_df.head(3))
+                
+            # 確認按鈕
+            if st.button("確認還原資料"):
+                st.session_state['inventory'] = normalize_columns(debug_df)
                 save_inventory()
-                st.success("✅ 庫存還原成功！")
+                st.success("✅ 還原成功！")
                 time.sleep(1)
                 st.rerun()
                 
-        except Exception as e: st.error(f"讀取失敗: {e}")
+        except Exception as e:
+            st.error(f"檔案讀取失敗: {e}")
 
 # ------------------------------------------
 # 頁面 A: 庫存管理
@@ -626,7 +628,6 @@ elif page == "🧮 設計與成本計算":
 
         st.divider()
 
-        # 這裡之前少了冒號，已經修復！
         if not filt_items.empty:
             filt_items['disp_label'] = filt_items.apply(make_design_label, axis=1)
             
