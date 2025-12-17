@@ -49,7 +49,7 @@ def save_design_history():
     except Exception: pass
 
 def robust_import_inventory(df, force_position=True):
-    """庫存檔專用讀取"""
+    """庫存檔專用讀取 (含強力型別轉換)"""
     if force_position:
         if df.shape[1] > len(COLUMNS): df = df.iloc[:, :len(COLUMNS)]
         elif df.shape[1] < len(COLUMNS):
@@ -63,10 +63,14 @@ def robust_import_inventory(df, force_position=True):
             if col not in df.columns: df[col] = ""
 
     df = df[COLUMNS]
+    # 強制轉數值，失敗則填 0
     for col in ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    # 強制轉文字
     for col in ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']:
         df[col] = df[col].astype(str).replace('nan', '').replace('None', '').apply(lambda x: x.strip())
+        
     return df
 
 def robust_import_sales(df):
@@ -81,11 +85,15 @@ def robust_import_sales(df):
     return df
 
 def make_inventory_label(row):
-    sz = f"{float(row.get('寬度mm',0))}mm"
+    try:
+        sz = f"{float(row.get('寬度mm',0))}mm"
+    except: sz = "0mm"
     return f"【{row.get('五行','')}】 {row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}) | {row.get('進貨廠商','')} | 存:{row.get('庫存(顆)',0)}"
 
 def make_design_label(row):
-    sz = f"{float(row.get('寬度mm',0))}mm"
+    try:
+        sz = f"{float(row.get('寬度mm',0))}mm"
+    except: sz = "0mm"
     return f"【{row.get('五行','')}】{row.get('名稱','')} | {row.get('形狀','')} ({sz}) | {row.get('進貨廠商','')} | ${float(row.get('單顆成本',0)):.2f}/顆 | 存:{row.get('庫存(顆)',0)}"
 
 def get_dynamic_options(col, defaults):
@@ -142,6 +150,12 @@ def rebuild_history_from_inventory():
 
 if 'inventory' not in st.session_state:
     st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+
+# ★★★ 自動消毒：確保數值欄位沒有 NaN，防止 int() 轉換失敗 ★★★
+if not st.session_state['inventory'].empty:
+    numeric_cols = ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']
+    for col in numeric_cols:
+        st.session_state['inventory'][col] = pd.to_numeric(st.session_state['inventory'][col], errors='coerce').fillna(0)
 
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
@@ -217,6 +231,7 @@ if page == "📦 庫存管理與進貨":
         if not inv_df.empty:
             inv_df['label'] = inv_df.apply(make_inventory_label, axis=1)
             target = st.selectbox("選擇商品", inv_df['label'].tolist())
+            
             rows = inv_df[inv_df['label'] == target]
             if not rows.empty:
                 row = rows.iloc[0]; idx = rows.index[0]
@@ -225,10 +240,24 @@ if page == "📦 庫存管理與進貨":
                     c1, c2 = st.columns(2)
                     qty = c1.number_input("進貨數量", 1)
                     cost = c2.number_input("進貨總價", 0.0)
+                    
                     if st.form_submit_button("📦 確認補貨"):
-                        new_qty = float(row['庫存(顆)']) + qty
-                        old_val = float(row['庫存(顆)']) * float(row['單顆成本'])
-                        new_avg = (old_val + cost) / new_qty if new_qty > 0 else 0
+                        # ★★★ 這裡加入了防呆轉型，防止 Error ★★★
+                        try:
+                            safe_old_qty = float(pd.to_numeric(row['庫存(顆)'], errors='coerce') or 0)
+                            safe_old_cost = float(pd.to_numeric(row['單顆成本'], errors='coerce') or 0)
+                        except:
+                            safe_old_qty = 0.0
+                            safe_old_cost = 0.0
+
+                        new_qty = safe_old_qty + qty
+                        
+                        # 避免除以零
+                        if new_qty > 0:
+                            new_avg = ((safe_old_qty * safe_old_cost) + cost) / new_qty
+                        else:
+                            new_avg = 0
+
                         st.session_state['inventory'].at[idx, '庫存(顆)'] = new_qty
                         st.session_state['inventory'].at[idx, '單顆成本'] = new_avg
                         st.session_state['inventory'].at[idx, '進貨日期'] = date.today()
@@ -238,7 +267,7 @@ if page == "📦 庫存管理與進貨":
                             '單號': 'RESTOCK', '動作': '補貨',
                             '編號': row['編號'], '分類': row['分類'], '名稱': row['名稱'],
                             '規格': format_size(row), '廠商': row['進貨廠商'],
-                            '進貨數量': qty, '進貨總價': cost, '單價': cost/qty if qty>0 else 0
+                            '進貨數量': qty, '進貨總價': cost, '單價': (cost/qty if qty>0 else 0)
                         }
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                         save_inventory()
@@ -305,8 +334,17 @@ if page == "📦 庫存管理與進貨":
                         el = c5.text_input("五行", orig['五行'])
                         sp = c6.text_input("廠商", orig['進貨廠商'])
                         c7, c8 = st.columns(2)
-                        qt = c7.number_input("庫存", value=int(float(orig['庫存(顆)'])))
-                        co = c8.number_input("成本", value=float(orig['單顆成本']))
+                        
+                        # 安全轉型
+                        try:
+                            safe_curr_stock = int(float(orig['庫存(顆)']))
+                        except: safe_curr_stock = 0
+                        try:
+                            safe_curr_cost = float(orig['單顆成本'])
+                        except: safe_curr_cost = 0.0
+                        
+                        qt = c7.number_input("庫存", value=safe_curr_stock)
+                        co = c8.number_input("成本", value=safe_curr_cost)
                         
                         if st.form_submit_button("💾 儲存"):
                             st.session_state['inventory'].at[idx, '名稱'] = nm
@@ -318,7 +356,7 @@ if page == "📦 庫存管理與進貨":
                             st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
                             st.session_state['inventory'].at[idx, '單顆成本'] = co
                             
-                            diff = qt - int(float(orig['庫存(顆)']))
+                            diff = qt - safe_curr_stock
                             if diff != 0:
                                 log = {
                                     '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
