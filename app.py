@@ -69,19 +69,18 @@ def normalize_columns(df):
         if col not in df.columns:
             df[col] = 0 if ('mm' in col or '價' in col or '數量' in col or '成本' in col) else ""
             
-    # 2. ★★★ 強制修復數值欄位 (這步解決 nan Error) ★★★
-    # 只要是數字欄位，先把無法轉數字的變成 NaN，然後把 NaN 全部填成 0
+    # 2. 強制修復數值欄位 (解決 nan Error)
     numeric_cols = ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # 3. ★★★ 強制修復文字欄位 ★★★
-    # 確保不會有 'nan' 這種字串出現
+    # 3. 強制修復文字欄位 (修復 AttributeError)
     text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
     for col in text_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).replace('nan', '').replace('None', '').strip()
+            # 這裡修正為 .str.strip()
+            df[col] = df[col].astype(str).replace('nan', '').replace('None', '').str.strip()
 
     return df[COLUMNS]
 
