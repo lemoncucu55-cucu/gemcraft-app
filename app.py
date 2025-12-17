@@ -55,7 +55,7 @@ def save_design_history():
     except Exception: pass
 
 def normalize_columns(df):
-    """標準化欄位名稱並移除舊的多餘欄位 (加強型)"""
+    """標準化欄位名稱並強制修復數據格式 (防呆核心)"""
     rename_map = {
         '尺寸': '寬度mm', 'Size': '寬度mm', '寬度': '寬度mm', 'Width': '寬度mm',
         '長度': '長度mm', 'Length': '長度mm',
@@ -64,19 +64,24 @@ def normalize_columns(df):
     }
     df = df.rename(columns=rename_map)
     
-    # 補齊欄位
+    # 1. 補齊缺少的欄位
     for col in COLUMNS:
         if col not in df.columns:
-            if 'mm' in col or '價' in col or '數量' in col or '成本' in col:
-                df[col] = 0
-            else:
-                df[col] = ""
-    
-    # ★★★ 強制轉型：確保關鍵欄位是字串，避免 Index Error ★★★
+            df[col] = 0 if ('mm' in col or '價' in col or '數量' in col or '成本' in col) else ""
+            
+    # 2. ★★★ 強制修復數值欄位 (這步解決 nan Error) ★★★
+    # 只要是數字欄位，先把無法轉數字的變成 NaN，然後把 NaN 全部填成 0
+    numeric_cols = ['寬度mm', '長度mm', '進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # 3. ★★★ 強制修復文字欄位 ★★★
+    # 確保不會有 'nan' 這種字串出現
     text_cols = ['編號', '分類', '名稱', '形狀', '五行', '進貨廠商']
-    for c in text_cols:
-        if c in df.columns:
-            df[c] = df[c].astype(str).replace('nan', '').replace('None', '')
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace('nan', '').replace('None', '').strip()
 
     return df[COLUMNS]
 
@@ -99,7 +104,6 @@ def generate_new_id(category, df):
 def merge_inventory_duplicates(df):
     """合併重複項目 (已加入 '形狀' 作為判斷標準)"""
     if df.empty: return df, 0
-    # 這裡加入 '形狀'，確保不同形狀不會被合併
     group_cols = ['分類', '名稱', '寬度mm', '長度mm', '形狀', '五行', '進貨廠商']
     
     if not set(group_cols).issubset(df.columns): return df, 0
@@ -169,7 +173,7 @@ if 'inventory' not in st.session_state:
         except: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
     else: st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
 
-# 強制正規化
+# 強制正規化 (確保資料一致性)
 if 'inventory' in st.session_state:
     st.session_state['inventory'] = normalize_columns(st.session_state['inventory'])
 
@@ -215,10 +219,11 @@ with st.sidebar:
     if uploaded_inv:
         try:
             df = pd.read_csv(uploaded_inv)
-            # 這裡進行強制正規化，防止欄位錯誤
+            # 這裡進行強制正規化，修復所有空值問題
             st.session_state['inventory'] = normalize_columns(df)
             save_inventory()
-            st.success("庫存還原成功！")
+            st.success("✅ 庫存還原成功！已自動修復格式錯誤。")
+            time.sleep(1)
             st.rerun()
         except Exception as e: st.error(f"讀取失敗: {e}")
 
@@ -379,14 +384,13 @@ if page == "📦 庫存管理與進貨":
             edit_df['label'] = edit_df.apply(make_inventory_label, axis=1)
             sel_label = st.selectbox("🔍 選擇要修改的商品", edit_df['label'].tolist())
             
-            # ★★★ 修正點：使用安全的資料檢索方式 ★★★
+            # 安全資料檢索
             target_subset = edit_df[edit_df['label'] == sel_label]
             
             if not target_subset.empty:
                 orig_row = target_subset.iloc[0]
                 target_id = orig_row['編號']
                 
-                # 再次在主資料庫中確認該編號存在 (防呆機制)
                 matching_inv = st.session_state['inventory'][st.session_state['inventory']['編號'] == target_id]
                 
                 if not matching_inv.empty:
@@ -420,8 +424,13 @@ if page == "📦 庫存管理與進貨":
 
                         st.divider()
                         ec7, ec8 = st.columns(2)
-                        # 這裡記錄原本的庫存，用來比對
-                        old_qty = int(orig_row['庫存(顆)'])
+                        
+                        # 這裡加入防呆，確保轉成 int 不會報錯
+                        try:
+                            old_qty = int(float(orig_row['庫存(顆)']))
+                        except:
+                            old_qty = 0
+
                         with ec7: 
                             estock = st.number_input(f"庫存數量 (盤點前: {old_qty})", value=old_qty, step=1)
                         with ec8: 
