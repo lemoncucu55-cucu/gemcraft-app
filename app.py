@@ -142,24 +142,48 @@ def merge_inventory_duplicates(df):
     return robust_import_inventory(final, False), orig_cnt - len(final)
 
 # ==========================================
-# 3. 初始化 Session
+# 3. 初始化 Session (強制修復版本)
 # ==========================================
 
+# A. 基礎初始化
 if 'inventory' not in st.session_state:
-    st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+    # 嘗試從檔案讀取
+    if os.path.exists(DEFAULT_CSV_FILE):
+        try:
+            raw_df = pd.read_csv(DEFAULT_CSV_FILE, encoding='utf-8-sig')
+            st.session_state['inventory'] = robust_import_inventory(raw_df)
+        except:
+            st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+    else:
+        st.session_state['inventory'] = pd.DataFrame(columns=COLUMNS)
+
 if 'history' not in st.session_state:
     st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
+
 if 'design_history' not in st.session_state:
     st.session_state['design_history'] = pd.DataFrame(columns=DESIGN_HISTORY_COLUMNS)
+
 if 'current_design' not in st.session_state:
     st.session_state['current_design'] = []
+
 if 'admin_mode' not in st.session_state:
     st.session_state['admin_mode'] = False
 
-# 自動將現有沒設倉庫的資料改為 Imeng
-if not st.session_state['inventory'].empty and '倉庫' in st.session_state['inventory'].columns:
-    st.session_state['inventory']['倉庫'] = st.session_state['inventory']['倉庫'].replace(['', 'nan'], 'Imeng').fillna('Imeng')
+# B. ★ 強制檢查並補齊「倉庫」欄位 ★
+# 這是修復 KeyError 的關鍵
+if not st.session_state['inventory'].empty:
+    # 如果缺少倉庫欄位，立刻補上
+    if '倉庫' not in st.session_state['inventory'].columns:
+        st.session_state['inventory']['倉庫'] = "Imeng"
+    
+    # 確保所有數值欄位正確，避免後續計算出錯
+    for col in ['進貨總價', '進貨數量(顆)', '庫存(顆)', '單顆成本']:
+        if col in st.session_state['inventory'].columns:
+            st.session_state['inventory'][col] = pd.to_numeric(st.session_state['inventory'][col], errors='coerce').fillna(0)
 
+    # 再次確認欄位順序對齊 COLUMNS 定義
+    existing_cols = [c for c in COLUMNS if c in st.session_state['inventory'].columns]
+    st.session_state['inventory'] = st.session_state['inventory'][existing_cols]
 # ==========================================
 # 4. UI 介面
 # ==========================================
