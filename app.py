@@ -144,14 +144,15 @@ if page == "📦 庫存管理與進貨":
             with st.form("restock"):
                 st.write(f"倉庫: **{row['倉庫']}** | 名稱: **{row['名稱']}**")
                 c1, c2 = st.columns(2)
-                qty = c1.number_input("進貨數量", 1)
-                cost = c2.number_input("進貨總價", 0.0) if st.session_state['admin_mode'] else 0.0
+                qty = c1.number_input("進貨數量", min_value=1, value=1)
+                cost = c2.number_input("進貨總價", min_value=0.0, value=0.0) if st.session_state['admin_mode'] else 0.0
                 if st.form_submit_button("確認補貨"):
                     new_q = row['庫存(顆)'] + qty
                     new_c = ((row['庫存(顆)'] * row['單顆成本']) + cost) / new_q if new_q > 0 else 0
                     st.session_state['inventory'].at[idx, '庫存(顆)'] = new_q
                     if st.session_state['admin_mode']: st.session_state['inventory'].at[idx, '單顆成本'] = new_c
                     save_inventory(); st.success("補貨完成"); st.rerun()
+        else: st.info("無庫存")
 
     with tab2: # 建立新商品
         with st.form("add_new"):
@@ -161,8 +162,8 @@ if page == "📦 庫存管理與進貨":
             name = c3.text_input("名稱")
             
             c4, c5, c6 = st.columns(3)
-            w = c4.number_input("寬度mm", 0.0)
-            l = c5.number_input("長度mm", 0.0)
+            w = c4.number_input("寬度mm", min_value=0.0, value=0.0)
+            l = c5.number_input("長度mm", min_value=0.0, value=0.0)
             shape = c6.selectbox("形狀", get_dynamic_options('形狀', DEFAULT_SHAPES))
             if shape == "➕ 手動輸入/新增": shape = st.text_input("輸入形狀")
             
@@ -171,9 +172,9 @@ if page == "📦 庫存管理與進貨":
             if elem == "➕ 手動輸入/新增": elem = st.text_input("輸入五行")
             sup = c8.selectbox("廠商", get_dynamic_options('進貨廠商', DEFAULT_SUPPLIERS))
             if sup == "➕ 手動輸入/新增": sup = st.text_input("輸入廠商")
-            qty = c9.number_input("進貨數量", 1)
+            qty = c9.number_input("進貨數量", min_value=1, value=1)
             
-            price = st.number_input("進貨總價", 0.0) if st.session_state['admin_mode'] else 0.0
+            price = st.number_input("進貨總價", min_value=0.0, value=0.0) if st.session_state['admin_mode'] else 0.0
             
             if st.form_submit_button("➕ 新增商品"):
                 nid = f"ST{int(time.time())}"
@@ -195,12 +196,15 @@ if page == "📦 庫存管理與進貨":
             cur_s = int(row['庫存(顆)'])
             with st.form("out_form"):
                 st.write(f"倉庫: **{row['倉庫']}** | 目前庫存: **{cur_s}**")
-                qty_o = st.number_input("出庫數量", 0, cur_s, (1 if cur_s > 0 else 0))
+                # 修正報錯：動態決定預設值與範圍
+                qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=min(cur_s, 1 if cur_s > 0 else 0))
                 note = st.text_area("出庫原因/備註")
                 if st.form_submit_button("確認出庫"):
                     if qty_o > 0:
                         st.session_state['inventory'].at[idx, '庫存(顆)'] -= qty_o
                         save_inventory(); st.warning("已扣除庫存"); time.sleep(1); st.rerun()
+                    else:
+                        st.error("出庫數量必須大於 0")
         else: st.info("無庫存")
 
     with tab3: # 修改與盤點
@@ -218,21 +222,17 @@ if page == "📦 庫存管理與進貨":
                 wh = c2.selectbox("所屬倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
                 
                 c3, c4, c5 = st.columns(3)
-                wm = c3.number_input("寬度mm", value=float(orig['寬度mm']))
-                lm = c4.number_input("長度mm", value=float(orig['長度mm']))
+                wm = c3.number_input("寬度mm", min_value=0.0, value=float(orig['寬度mm']))
+                lm = c4.number_input("長度mm", min_value=0.0, value=float(orig['長度mm']))
                 sh = c5.text_input("形狀", orig['形狀'])
                 
                 c6, c7 = st.columns(2)
-                qt = c6.number_input("庫存量修正(盤點)", value=int(orig['庫存(顆)']))
-                # 成本與廠商僅限主管修改
-                co = c7.number_input("單顆成本修正", value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
+                qt = c6.number_input("庫存量修正(盤點)", min_value=0, value=int(orig['庫存(顆)']))
+                co = c7.number_input("單顆成本修正", min_value=0.0, value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
                 
                 sup = st.text_input("進貨廠商修正", orig['進貨廠商']) if st.session_state['admin_mode'] else orig['進貨廠商']
                 
-                c_btn1, c_btn2 = st.columns([1, 4])
-                submit = c_btn1.form_submit_button("💾 儲存修改")
-                
-                if submit:
+                if st.form_submit_button("💾 儲存修改"):
                     st.session_state['inventory'].at[idx, '名稱'] = nm
                     st.session_state['inventory'].at[idx, '倉庫'] = wh
                     st.session_state['inventory'].at[idx, '寬度mm'] = wm
@@ -254,7 +254,7 @@ if page == "📦 庫存管理與進貨":
     st.subheader("📊 倉庫數據統計")
     if not st.session_state['inventory'].empty:
         df_s = st.session_state['inventory'].copy()
-        summary = df_stats = df_s.groupby('倉庫').agg({'編號': 'count', '庫存(顆)': 'sum'}).rename(columns={'編號': '品項數量', '庫存(顆)': '顆數總計'})
+        summary = df_s.groupby('倉庫').agg({'編號': 'count', '庫存(顆)': 'sum'}).rename(columns={'編號': '品項數量', '庫存(顆)': '顆數總計'})
         st.table(summary.astype(int))
 
     st.subheader("📋 庫存總表清單")
@@ -287,10 +287,15 @@ elif page == "🧮 設計與成本計算":
         sel = st.selectbox("選擇材料", items['lbl'])
         idx = items[items['lbl'] == sel].index[0]
         row = items.loc[idx]
-        qty = st.number_input("數量", 1, max_value=int(row['庫存(顆)']))
+        cur_s_design = int(row['庫存(顆)'])
+        # 修正報錯：動態決定範圍
+        qty = st.number_input("數量", min_value=0, max_value=max(0, cur_s_design), value=min(cur_s_design, 1 if cur_s_design > 0 else 0))
         if st.button("⬇️ 加入作品清單"):
-            st.session_state['current_design'].append({'編號':row['編號'], '名稱':row['名稱'], '數量':qty, '單價':row['單顆成本']})
-            st.rerun()
+            if qty > 0:
+                st.session_state['current_design'].append({'編號':row['編號'], '名稱':row['名稱'], '數量':qty, '單價':row['單顆成本']})
+                st.rerun()
+            else:
+                st.error("加入數量必須大於 0")
         
         if st.session_state['current_design']:
             ddf = pd.DataFrame(st.session_state['current_design'])
