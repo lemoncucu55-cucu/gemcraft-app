@@ -66,7 +66,7 @@ def format_size(row):
 def make_inventory_label(row):
     sz = format_size(row)
     sup = f" | {row.get('進貨廠商','')}" if st.session_state.get('admin_mode', False) else ""
-    return f"[{row.get('倉庫','Imeng')}] {row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}){sup} | 存:{int(row.get('庫存(顆)',0))}"
+    return f"[{row.get('倉庫','Imeng')}] {row.get('編號','')} | {row.get('名稱','')} | {row.get('形狀','')} ({sz}){sup} | 存:{int(float(row.get('庫存(顆)',0)))}"
 
 def get_dynamic_options(col, defaults):
     opts = set(defaults)
@@ -144,15 +144,14 @@ if page == "📦 庫存管理與進貨":
             with st.form("restock"):
                 st.write(f"倉庫: **{row['倉庫']}** | 名稱: **{row['名稱']}**")
                 c1, c2 = st.columns(2)
-                qty = c1.number_input("進貨數量", min_value=1, value=1)
-                cost = c2.number_input("進貨總價", min_value=0.0, value=0.0) if st.session_state['admin_mode'] else 0.0
+                qty = c1.number_input("進貨數量", min_value=1, value=1, key=f"qty_tab1_{idx}")
+                cost = c2.number_input("進貨總價", min_value=0.0, value=0.0, key=f"cost_tab1_{idx}") if st.session_state['admin_mode'] else 0.0
                 if st.form_submit_button("確認補貨"):
                     new_q = row['庫存(顆)'] + qty
                     new_c = ((row['庫存(顆)'] * row['單顆成本']) + cost) / new_q if new_q > 0 else 0
                     st.session_state['inventory'].at[idx, '庫存(顆)'] = new_q
                     if st.session_state['admin_mode']: st.session_state['inventory'].at[idx, '單顆成本'] = new_c
                     save_inventory(); st.success("補貨完成"); st.rerun()
-        else: st.info("無庫存")
 
     with tab2: # 建立新商品
         with st.form("add_new"):
@@ -193,11 +192,11 @@ if page == "📦 庫存管理與進貨":
             target = st.selectbox("選擇商品", inv_o['label'].tolist(), key="tab4_sel")
             idx = inv_o[inv_o['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
-            cur_s = int(row['庫存(顆)'])
+            cur_s = int(float(row['庫存(顆)']))
             with st.form("out_form"):
                 st.write(f"倉庫: **{row['倉庫']}** | 目前庫存: **{cur_s}**")
-                # 修正報錯：動態決定預設值與範圍
-                qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=min(cur_s, 1 if cur_s > 0 else 0))
+                # 採用動態 Key 與 預設為 0 的策略
+                qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0, key=f"out_{idx}")
                 note = st.text_area("出庫原因/備註")
                 if st.form_submit_button("確認出庫"):
                     if qty_o > 0:
@@ -227,8 +226,8 @@ if page == "📦 庫存管理與進貨":
                 sh = c5.text_input("形狀", orig['形狀'])
                 
                 c6, c7 = st.columns(2)
-                qt = c6.number_input("庫存量修正(盤點)", min_value=0, value=int(orig['庫存(顆)']))
-                co = c7.number_input("單顆成本修正", min_value=0.0, value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
+                qt = c6.number_input("庫存量修正(盤點)", min_value=0, value=int(float(orig['庫存(顆)'])), key=f"qt_edit_{idx}")
+                co = c7.number_input("單顆成本修正", min_value=0.0, value=float(orig['單顆成本']), key=f"co_edit_{idx}") if st.session_state['admin_mode'] else float(orig['單顆成本'])
                 
                 sup = st.text_input("進貨廠商修正", orig['進貨廠商']) if st.session_state['admin_mode'] else orig['進貨廠商']
                 
@@ -254,6 +253,8 @@ if page == "📦 庫存管理與進貨":
     st.subheader("📊 倉庫數據統計")
     if not st.session_state['inventory'].empty:
         df_s = st.session_state['inventory'].copy()
+        # 統計前先進行數值化
+        df_s['庫存(顆)'] = pd.to_numeric(df_s['庫存(顆)'], errors='coerce').fillna(0)
         summary = df_s.groupby('倉庫').agg({'編號': 'count', '庫存(顆)': 'sum'}).rename(columns={'編號': '品項數量', '庫存(顆)': '顆數總計'})
         st.table(summary.astype(int))
 
@@ -283,16 +284,16 @@ elif page == "🧮 設計與成本計算":
     st.subheader("🧮 作品設計")
     items = st.session_state['inventory'].copy()
     if not items.empty:
-        items['lbl'] = items.apply(lambda r: f"[{r['倉庫']}] {r['名稱']} | 存:{int(r['庫存(顆)'])}", axis=1)
-        sel = st.selectbox("選擇材料", items['lbl'])
-        idx = items[items['lbl'] == sel].index[0]
-        row = items.loc[idx]
-        cur_s_design = int(row['庫存(顆)'])
-        # 修正報錯：動態決定範圍
-        qty = st.number_input("數量", min_value=0, max_value=max(0, cur_s_design), value=min(cur_s_design, 1 if cur_s_design > 0 else 0))
+        items['lbl'] = items.apply(lambda r: f"[{r['倉庫']}] {r['名稱']} | 存:{int(float(r['庫存(顆)']))}", axis=1)
+        sel = st.selectbox("選擇材料", items['lbl'], key="design_sel_box")
+        idx_design = items[items['lbl'] == sel].index[0]
+        row_design = items.loc[idx_design]
+        cur_s_design = int(float(row_design['庫存(顆)']))
+        
+        qty_design = st.number_input("數量", min_value=0, max_value=max(0, cur_s_design), value=0, key=f"design_qty_{idx_design}")
         if st.button("⬇️ 加入作品清單"):
-            if qty > 0:
-                st.session_state['current_design'].append({'編號':row['編號'], '名稱':row['名稱'], '數量':qty, '單價':row['單顆成本']})
+            if qty_design > 0:
+                st.session_state['current_design'].append({'編號':row_design['編號'], '名稱':row_design['名稱'], '數量':qty_design, '單價':row_design['單顆成本']})
                 st.rerun()
             else:
                 st.error("加入數量必須大於 0")
