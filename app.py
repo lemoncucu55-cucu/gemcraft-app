@@ -139,7 +139,6 @@ with st.sidebar:
 # ------------------------------------------
 if page == "📦 庫存管理與進貨":
     st.subheader("📦 庫存管理")
-    # 新增一個 Tab 4: 📤 領用與出庫
     tab1, tab2, tab4, tab3 = st.tabs(["🔄 舊品補貨", "✨ 建立新商品", "📤 領用與出庫", "🛠️ 修改與盤點"])
     
     with tab1: # 補貨
@@ -164,7 +163,6 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[idx, '庫存(顆)'] = new_q
                         if st.session_state['admin_mode']: st.session_state['inventory'].at[idx, '單顆成本'] = new_avg
                         
-                        # 紀錄
                         log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'RESTOCK', '動作': '補貨', '倉庫': row['倉庫'], '編號': row['編號'], '分類': row['分類'], '名稱': row['名稱'], '規格': format_size(row), '廠商': row['進貨廠商'], '進貨數量': qty, '進貨總價': cost, '單價': (cost/qty if qty>0 else 0)}
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                         save_inventory(); st.success("補貨成功"); st.rerun()
@@ -187,29 +185,66 @@ if page == "📦 庫存管理與進貨":
                 st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_item])], ignore_index=True)
                 save_inventory(); st.success(f"已存入 {wh}"); st.rerun()
 
-    with tab4: # 📤 出庫功能
+    with tab4: # 📤 出庫功能 (修正報錯並增加備註)
         st.write("用於非銷售的出庫動作（如：損壞、自用、樣品領用）")
         inv_df_out = st.session_state['inventory'].copy()
         if not inv_df_out.empty:
             inv_df_out['label'] = inv_df_out.apply(make_inventory_label, axis=1)
             target_out = st.selectbox("選擇出庫商品", inv_df_out['label'].tolist(), key="outstock_sel")
             row_out_match = inv_df_out[inv_df_out['label'] == target_out]
+            
             if not row_out_match.empty:
                 row_o = row_out_match.iloc[0]
                 idx_o = st.session_state['inventory'][st.session_state['inventory']['編號'] == row_o['編號']].index[0]
+                
+                # 安全取得整數庫存
+                current_stock = int(float(row_o['庫存(顆)']))
+                
                 with st.form("outstock_form"):
-                    st.write(f"倉庫: **{row_o['倉庫']}** | 目前庫存: **{int(row_o['庫存(顆)'])}**")
+                    st.write(f"倉庫: **{row_o['倉庫']}** | 目前庫存: **{current_stock}**")
                     c1, c2 = st.columns(2)
-                    qty_out = c1.number_input("出庫數量", 1, max_value=int(row_o['庫存(顆)']))
-                    reason = c2.selectbox("出庫原因", ["自用", "損壞", "樣品領取", "其他"])
+                    
+                    # 報錯修復：動態預設值
+                    default_val = 1 if current_stock > 0 else 0
+                    qty_out = c1.number_input("出庫數量", min_value=0, max_value=current_stock, value=default_val)
+                    
+                    reason_type = c2.selectbox("出庫類別", ["自用", "損壞", "樣品領取", "其他"])
+                    
+                    # 新增：詳細備註欄位
+                    note = st.text_area("詳細備註 (選填)", placeholder="例如：手串樣品製作、珠子表面刮傷...")
+                    
                     if st.form_submit_button("📤 確認出庫"):
-                        st.session_state['inventory'].at[idx_o, '庫存(顆)'] -= qty_out
-                        
-                        # 紀錄出庫流水 (數量記為負值或註記動作)
-                        log_out = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'OUT_STOCK', '動作': f'出庫({reason})', '倉庫': row_o['倉庫'], '編號': row_o['編號'], '分類': row_o['分類'], '名稱': row_o['名稱'], '規格': format_size(row_o), '廠商': row_o['進貨廠商'], '進貨數量': -qty_out, '進貨總價': 0, '單價': row_o['單顆成本']}
-                        st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log_out])], ignore_index=True)
-                        
-                        save_inventory(); st.warning(f"已完成出庫 {qty_out} 顆"); st.rerun()
+                        if qty_out <= 0:
+                            st.error("出庫數量必須大於 0")
+                        else:
+                            st.session_state['inventory'].at[idx_o, '庫存(顆)'] -= qty_out
+                            
+                            # 組合出庫動作文字
+                            action_text = f"出庫({reason_type})"
+                            if note:
+                                action_text += f" - {note}"
+                            
+                            # 紀錄出庫流水
+                            log_out = {
+                                '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                                '單號': 'OUT_STOCK', 
+                                '動作': action_text, 
+                                '倉庫': row_o['倉庫'], 
+                                '編號': row_o['編號'], 
+                                '分類': row_o['分類'], 
+                                '名稱': row_o['名稱'], 
+                                '規格': format_size(row_o), 
+                                '廠商': row_o['進貨廠商'], 
+                                '進貨數量': -qty_out, 
+                                '進貨總價': 0, 
+                                '單價': row_o['單顆成本']
+                            }
+                            st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log_out])], ignore_index=True)
+                            
+                            save_inventory()
+                            st.warning(f"已完成出庫 {qty_out} 顆")
+                            time.sleep(1)
+                            st.rerun()
         else: st.info("無庫存可出庫")
 
     with tab3: # 修改與盤點
