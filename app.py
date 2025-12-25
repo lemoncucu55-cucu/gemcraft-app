@@ -141,7 +141,8 @@ with st.sidebar:
 # 頁面 A: 庫存管理
 # ------------------------------------------
 if page == "📦 庫存管理與進貨":
-    tab1, tab2, tab4, tab3 = st.tabs(["🔄 舊品補貨", "✨ 建立新商品", "📤 領用與出庫", "🛠️ 修改與盤點"])
+    st.subheader("📦 庫存管理")
+    tab1, tab2, tab4, tab3 = st.tabs(["🔄 舊品補貨", "✨ 建立新商品", "📤 領用/出庫與入庫", "🛠️ 修改與盤點"])
     
     with tab1: # 補貨
         inv = st.session_state['inventory']
@@ -173,7 +174,6 @@ if page == "📦 庫存管理與進貨":
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             name = c3.text_input("名稱")
             
-            # --- 新增尺寸填寫功能 ---
             st.markdown("##### 📏 規格尺寸")
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -199,26 +199,60 @@ if page == "📦 庫存管理與進貨":
                 st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
                 save_inventory(); st.success(f"已成功建立新商品：{name}"); st.rerun()
 
-    with tab4: # 📤 領用與出庫
+    with tab4: # 📤 領用/出庫與入庫
+        st.markdown("##### 📦 非進貨性質領用、出庫與入庫")
         inv_o = st.session_state['inventory'].copy()
         if not inv_o.empty:
             inv_o['label'] = inv_o.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇出庫商品", inv_o['label'].tolist(), key="t4_sel")
+            target = st.selectbox("選擇操作商品", inv_o['label'].tolist(), key="t4_sel")
             idx = inv_o[inv_o['label'] == target].index[0]
             row = st.session_state['inventory'].loc[idx]
             cur_s = int(float(row['庫存(顆)']))
-            with st.form("out_form"):
-                st.write(f"倉庫: **{row['倉庫']}** | 名稱: **{row['名稱']}** | 目前庫存: **{cur_s}**")
-                qty_o = st.number_input("出庫數量", min_value=0, max_value=max(0, cur_s), value=0)
-                reason = st.selectbox("出庫類別", ["自用", "損壞", "樣品", "其他"])
+            
+            # --- 新增動作選擇：入庫或出庫 ---
+            with st.form("action_form"):
+                c_action, c_wh_target = st.columns(2)
+                action_type = c_action.radio("執行動作", ["📤 領用/出庫", "📥 樣品歸還/入庫"], horizontal=True)
+                wh_target = c_wh_target.selectbox("目標倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(row['倉庫']) if row['倉庫'] in DEFAULT_WAREHOUSES else 0)
+                
+                st.write(f"目前商品資訊：**{row['名稱']}** | 目前倉庫：**{row['倉庫']}** | 目前庫存：**{cur_s}**")
+                
+                c_qty, c_reason = st.columns(2)
+                if "出庫" in action_type:
+                    qty_o = c_qty.number_input("變動數量", min_value=0, max_value=max(0, cur_s), value=0)
+                    reason = c_reason.selectbox("類別", ["自用", "損壞", "樣品領用", "其他"])
+                    action_code = "OUT"
+                    qty_sign = -1
+                else:
+                    qty_o = c_qty.number_input("變動數量", min_value=0, value=0)
+                    reason = c_reason.selectbox("類別", ["樣品歸還", "客戶退回", "盤點尋獲", "其他"])
+                    action_code = "IN"
+                    qty_sign = 1
+                
                 note_out = st.text_area("詳細備註/說明")
-                if st.form_submit_button("確認出庫"):
+                
+                if st.form_submit_button("確認執行"):
                     if qty_o > 0:
-                        st.session_state['inventory'].at[idx, '庫存(顆)'] -= qty_o
-                        action_msg = f"領用出庫({reason})" + (f" - {note_out}" if note_out else "")
-                        log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'OUT', '動作': action_msg, '倉庫': row['倉庫'], '編號': row['編號'], '分類': row['分類'], '名稱': row['名稱'], '規格': format_size(row), '廠商': row['進貨廠商'], '數量變動': -qty_o, '進貨總價': 0, '單價': row['單顆成本']}
+                        # 扣除/增加庫存並更新倉庫
+                        st.session_state['inventory'].at[idx, '庫存(顆)'] += (qty_o * qty_sign)
+                        st.session_state['inventory'].at[idx, '倉庫'] = wh_target
+                        
+                        action_msg = f"{action_type}({reason})" + (f" - {note_out}" if note_out else "")
+                        log = {
+                            '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                            '單號': action_code, 
+                            '動作': action_msg, 
+                            '倉庫': wh_target, 
+                            '編號': row['編號'], '分類': row['分類'], '名稱': row['名稱'], 
+                            '規格': format_size(row), '廠商': row['進貨廠商'], 
+                            '數量變動': (qty_o * qty_sign), '進貨總價': 0, '單價': row['單顆成本']
+                        }
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                        save_inventory(); save_history(); st.warning("已扣除庫存並記錄"); st.rerun()
+                        save_inventory(); save_history(); st.success(f"已完成 {action_type}"); st.rerun()
+                    else:
+                        st.error("數量必須大於 0")
+        else:
+            st.info("無庫存可進行操作")
 
     with tab3: # 🛠️ 修改與盤點
         if not st.session_state['inventory'].empty:
