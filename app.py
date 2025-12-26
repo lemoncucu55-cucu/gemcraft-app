@@ -25,8 +25,15 @@ HISTORY_COLUMNS = [
     '廠商', '數量變動', '進貨總價', '單價'
 ]
 
+# 新增：作品紀錄欄位定義
+DESIGN_SALES_COLUMNS = [
+    '售出時間', '作品名稱', '材料明細', '總成本', '建議售價x3', '建議售價x5', '備註'
+]
+
 DEFAULT_CSV_FILE = 'inventory_backup_v2.csv'
 HISTORY_FILE = 'inventory_history.csv'
+DESIGN_SALES_FILE = 'design_sales_history.csv' # 新增：作品售出紀錄檔案
+
 DEFAULT_WAREHOUSES = ["Imeng", "千畇"]
 DEFAULT_SUPPLIERS = ["小聰頭", "廠商A", "廠商B", "自用", "蝦皮", "淘寶", "TB-東吳天然石坊", "永安", "Rich"]
 DEFAULT_SHAPES = ["圓珠", "切角", "鑽切", "圓筒", "方體", "長柱", "不規則", "造型", "原礦"]
@@ -46,6 +53,13 @@ def save_history():
     try:
         if 'history' in st.session_state:
             st.session_state['history'].to_csv(HISTORY_FILE, index=False, encoding='utf-8-sig')
+    except Exception: pass
+
+def save_design_sales():
+    """新增：儲存設計作品售出紀錄"""
+    try:
+        if 'design_sales' in st.session_state:
+            st.session_state['design_sales'].to_csv(DESIGN_SALES_FILE, index=False, encoding='utf-8-sig')
     except Exception: pass
 
 def robust_import_inventory(df):
@@ -102,6 +116,13 @@ if 'history' not in st.session_state:
         except: st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
     else: st.session_state['history'] = pd.DataFrame(columns=HISTORY_COLUMNS)
 
+# 新增：初始化設計紀錄
+if 'design_sales' not in st.session_state:
+    if os.path.exists(DESIGN_SALES_FILE):
+        try: st.session_state['design_sales'] = pd.read_csv(DESIGN_SALES_FILE, encoding='utf-8-sig')
+        except: st.session_state['design_sales'] = pd.DataFrame(columns=DESIGN_SALES_COLUMNS)
+    else: st.session_state['design_sales'] = pd.DataFrame(columns=DESIGN_SALES_COLUMNS)
+
 if 'admin_mode' not in st.session_state: st.session_state['admin_mode'] = False
 if 'current_design' not in st.session_state: st.session_state['current_design'] = []
 
@@ -124,6 +145,10 @@ with st.sidebar:
     if not st.session_state['history'].empty:
         csv_hist = st.session_state['history'].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📜 下載出入庫紀錄表", csv_hist, f'history_{date.today()}.csv', "text/csv")
+    # 新增：設計紀錄下載按鈕
+    if not st.session_state['design_sales'].empty:
+        csv_design = st.session_state['design_sales'].to_csv(index=False).encode('utf-8-sig')
+        st.download_button("💍 下載設計作品紀錄", csv_design, f'design_sales_{date.today()}.csv', "text/csv")
 
     st.divider()
     uploaded_file = st.file_uploader("📤 上傳資料修正位移", type=['csv'])
@@ -173,7 +198,6 @@ if page == "📦 庫存管理與進貨":
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             name = c3.text_input("名稱")
             
-            # --- 新增尺寸填寫功能 ---
             st.markdown("##### 📏 規格尺寸")
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -274,7 +298,7 @@ if page == "📦 庫存管理與進貨":
         st.dataframe(vdf, use_container_width=True)
 
 # ------------------------------------------
-# 頁面 B: 紀錄查詢
+# 頁面 B: 紀錄明細查詢
 # ------------------------------------------
 elif page == "📜 紀錄明細查詢":
     st.subheader("📜 歷史出入庫明細")
@@ -295,16 +319,59 @@ elif page == "🧮 設計與成本計算":
         items['lbl'] = items.apply(make_inventory_label, axis=1)
         sel = st.selectbox("選擇材料", items['lbl'], key="design_sel")
         idx = items[items['lbl'] == sel].index[0]
-        cur_s = int(float(items.loc[idx, '庫存(顆)']))
+        row = items.loc[idx]
+        cur_s = int(float(row['庫存(顆)']))
         qty = st.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
+        
         if st.button("⬇️ 加入清單"):
             if qty > 0:
-                st.session_state['current_design'].append({'編號':items.loc[idx, '編號'], '名稱':items.loc[idx, '名稱'], '數量':qty, '單價':items.loc[idx, '單顆成本']})
+                st.session_state['current_design'].append({
+                    '編號': row['編號'], 
+                    '名稱': row['名稱'], 
+                    '數量': qty, 
+                    '單價': row['單顆成本']
+                })
                 st.rerun()
+        
         if st.session_state['current_design']:
             ddf = pd.DataFrame(st.session_state['current_design'])
             st.table(ddf[['名稱', '數量']] if not st.session_state['admin_mode'] else ddf)
-            if st.button("✅ 售出 (自動扣庫存)"):
+            
+            # 設計作品細節輸入
+            design_name = st.text_input("輸入作品名稱", "未命名手串")
+            design_note = st.text_area("作品備註 (如：客戶王小姐訂製)")
+            
+            # 主管模式下顯示總成本
+            total_c = (ddf['數量'] * ddf['單價']).sum()
+            if st.session_state['admin_mode']:
+                st.metric("當前設計材料總成本", f"${total_c:.2f}")
+
+            if st.button("✅ 售出 (自動扣庫存並儲存紀錄)"):
+                material_list = []
                 for x in st.session_state['current_design']:
+                    # 執行扣庫存
                     st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == x['編號'], '庫存(顆)'] -= x['數量']
-                save_inventory(); st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
+                    material_list.append(f"{x['名稱']}({x['數量']}顆)")
+                
+                # --- 新增：將資訊寫入設計作品售出報表 ---
+                new_sales_record = {
+                    '售出時間': datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    '作品名稱': design_name,
+                    '材料明細': " / ".join(material_list),
+                    '總成本': round(total_c, 2),
+                    '建議售價x3': round(total_c * 3, 0),
+                    '建議售價x5': round(total_c * 5, 0),
+                    '備註': design_note
+                }
+                st.session_state['design_sales'] = pd.concat([st.session_state['design_sales'], pd.DataFrame([new_sales_record])], ignore_index=True)
+                
+                # 儲存與清空
+                save_inventory()
+                save_design_sales()
+                st.session_state['current_design'] = []
+                st.success(f"作品「{design_name}」已售出完成紀錄！")
+                time.sleep(1); st.rerun()
+            
+            if st.button("🗑️ 清空清單"):
+                st.session_state['current_design'] = []
+                st.rerun()
