@@ -141,21 +141,18 @@ with st.sidebar:
     if not st.session_state['design_sales'].empty:
         st.download_button("💍 下載設計作品紀錄", st.session_state['design_sales'].to_csv(index=False).encode('utf-8-sig'), f'design_sales_{date.today()}.csv', "text/csv")
 
-    # --- 新增：上傳備份還原功能 ---
     st.divider()
     st.header("📤 恢復備份 (還原資料)")
-    restore_file = st.file_uploader("選擇備份 CSV 檔案", type=['csv'], help="上傳先前下載的庫存 CSV 檔案以還原數據")
+    restore_file = st.file_uploader("選擇備份 CSV 檔案", type=['csv'])
     if restore_file and st.button("🚨 確認還原庫存資料"):
         try:
             df_restored = pd.read_csv(restore_file, encoding='utf-8-sig')
             st.session_state['inventory'] = robust_import_inventory(df_restored)
             save_inventory()
-            st.success("✅ 庫存資料已成功從備份檔還原！")
+            st.success("✅ 庫存還原成功！")
             time.sleep(1); st.rerun()
-        except Exception as e:
-            st.error(f"❌ 還原失敗：{e}")
+        except Exception as e: st.error(f"❌ 還原失敗：{e}")
 
-    st.divider()
     if st.button("🔴 重置系統", type="secondary"):
         st.session_state.clear(); st.rerun()
 
@@ -206,7 +203,7 @@ if page == "📦 庫存管理與進貨":
                 nid = f"ST{int(time.time())}"
                 new_r = {'編號': nid, '倉庫': wh, '分類': cat, '名稱': name, '寬度mm': w_mm, '長度mm': l_mm, '形狀': shape, '五行': elem, '進貨廠商': sup, '庫存(顆)': qty_init, '單顆成本': 0, '進貨日期': date.today()}
                 st.session_state['inventory'] = pd.concat([st.session_state['inventory'], pd.DataFrame([new_r])], ignore_index=True)
-                save_inventory(); st.success(f"已成功建立新商品：{name}"); st.rerun()
+                save_inventory(); st.success(f"已建立新商品：{name}"); st.rerun()
 
     with tab4: # 📤 領用/出庫與入庫
         inv_o = st.session_state['inventory'].copy()
@@ -220,7 +217,6 @@ if page == "📦 庫存管理與進貨":
                 c_act, c_wh = st.columns(2)
                 action_type = c_act.radio("操作類型", ["📤 領用/出庫", "📥 手動入庫/樣品歸還"], horizontal=True)
                 wh_target = c_wh.selectbox("存放/扣除倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(row['倉庫']) if row['倉庫'] in DEFAULT_WAREHOUSES else 0)
-                st.write(f"商品：**{row['名稱']}** | 目前倉庫：**{row['倉庫']}** | 目前庫存：**{cur_s}**")
                 qty_val = st.number_input("數量變動", min_value=0, max_value=max(0, cur_s) if "出庫" in action_type else 999999, value=0)
                 reason = st.selectbox("類別原因", ["自用", "樣品", "損壞", "退貨/歸還", "其他"])
                 note = st.text_area("詳細備註/說明")
@@ -231,29 +227,25 @@ if page == "📦 庫存管理與進貨":
                         st.session_state['inventory'].at[idx, '倉庫'] = wh_target
                         log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'OUT' if qty_sign < 0 else 'IN', '動作': f"{action_type}({reason}) - {note}", '倉庫': wh_target, '編號': row['編號'], '分類': row['分類'], '名稱': row['名稱'], '規格': format_size(row), '廠商': row['進貨廠商'], '數量變動': (qty_val * qty_sign), '進貨總價': 0, '單價': row['單顆成本']}
                         st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                        save_inventory(); save_history(); st.success("操作已完成並更新倉庫位置"); st.rerun()
-        else: st.info("無資料")
+                        save_inventory(); save_history(); st.success("庫存更新完成"); st.rerun()
 
     with tab3: # 🛠️ 修改與盤點
         if not st.session_state['inventory'].empty:
             inv_e = st.session_state['inventory'].copy()
             inv_e['label'] = inv_e.apply(make_inventory_label, axis=1)
-            target = st.selectbox("選擇要修正的商品", inv_e['label'].tolist(), key="t3_sel")
+            target = st.selectbox("選擇商品修正", inv_e['label'].tolist(), key="t3_sel")
             idx = inv_e[inv_e['label'] == target].index[0]
             orig = st.session_state['inventory'].loc[idx]
             val = int(float(orig['庫存(顆)']))
             with st.form("edit_manual_form"):
-                st.write(f"正在修正編號: **{orig['編號']}**")
-                c1, c2 = st.columns(2)
-                nm = c1.text_input("商品名稱修正", orig['名稱'])
-                wh = c2.selectbox("調整所屬倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
+                nm = st.text_input("商品名稱修正", orig['名稱'])
+                wh = st.selectbox("調整所屬倉庫", DEFAULT_WAREHOUSES, index=DEFAULT_WAREHOUSES.index(orig['倉庫']) if orig['倉庫'] in DEFAULT_WAREHOUSES else 0)
                 c3, c4, c5 = st.columns(3)
                 wm = c3.number_input("寬度mm修正", value=float(orig['寬度mm']))
                 lm = c4.number_input("長度mm修正", value=float(orig['長度mm']))
                 qt = c5.number_input("盤點庫存量修正", min_value=min(0, val), value=val)
-                co = st.number_input("單顆成本修正", min_value=0.0, value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
+                co = st.number_input("成本修正", value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
                 el = st.selectbox("五行修正", get_dynamic_options('五行', DEFAULT_ELEMENTS), index=0)
-                note_edit = st.text_area("修正原因備註")
                 if st.form_submit_button("💾 儲存盤點修正"):
                     st.session_state['inventory'].at[idx, '名稱'] = nm
                     st.session_state['inventory'].at[idx, '倉庫'] = wh
@@ -262,10 +254,7 @@ if page == "📦 庫存管理與進貨":
                     st.session_state['inventory'].at[idx, '庫存(顆)'] = qt
                     st.session_state['inventory'].at[idx, '五行'] = el if el != "➕ 手動輸入/新增" else orig['五行']
                     if st.session_state['admin_mode']: st.session_state['inventory'].at[idx, '單顆成本'] = co
-                    action_msg = "盤點修正" + (f" - {note_edit}" if note_edit else "")
-                    log = {'紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), '單號': 'ADJUST', '動作': action_msg, '倉庫': wh, '編號': orig['編號'], '分類': orig['分類'], '名稱': nm, '規格': format_size(orig), '廠商': orig['進貨廠商'], '數量變動': (qt - val), '進貨總價': 0, '單價': co}
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
-                    save_inventory(); save_history(); st.success("修正已儲存"); st.rerun()
+                    save_inventory(); st.success("修正已儲存"); st.rerun()
         else: st.info("無資料")
 
     st.divider()
@@ -279,6 +268,30 @@ if page == "📦 庫存管理與進貨":
         if not st.session_state['admin_mode']:
             vdf = vdf.drop(columns=[c for c in SENSITIVE_COLUMNS if c in vdf.columns])
         st.dataframe(vdf, use_container_width=True)
+
+# ------------------------------------------
+# 頁面 B: 紀錄明細查詢 (補回此處)
+# ------------------------------------------
+elif page == "📜 紀錄明細查詢":
+    tab_log1, tab_log2 = st.tabs(["📜 出入庫流水紀錄", "💍 設計作品售出紀錄"])
+    
+    with tab_log1:
+        st.subheader("📜 歷史出入庫明細")
+        df_h = st.session_state['history'].copy()
+        if not df_h.empty:
+            if not st.session_state['admin_mode']:
+                df_h = df_h.drop(columns=[c for c in SENSITIVE_COLUMNS if c in df_h.columns])
+            st.dataframe(df_h, use_container_width=True)
+        else: st.info("尚無出入庫紀錄")
+
+    with tab_log2:
+        st.subheader("💍 設計作品售出歷史")
+        df_ds = st.session_state['design_sales'].copy()
+        if not df_ds.empty:
+            if not st.session_state['admin_mode']:
+                df_ds = df_ds.drop(columns=['總成本']) if '總成本' in df_ds.columns else df_ds
+            st.dataframe(df_ds, use_container_width=True)
+        else: st.info("尚無作品售出紀錄")
 
 # ------------------------------------------
 # 頁面 C: 設計與計算
@@ -319,4 +332,8 @@ elif page == "🧮 設計與成本計算":
                     '總成本': round(total_c, 2), '建議售價x3': round(total_c * 3, 0), '建議售價x5': round(total_c * 5, 0), '備註': d_note
                 }
                 st.session_state['design_sales'] = pd.concat([st.session_state['design_sales'], pd.DataFrame([new_rec])], ignore_index=True)
-                save_inventory(); save_design_sales(); st.session_state['current_design'] = []; st.success("已售出並儲存紀錄"); st.rerun()
+                save_inventory(); save_design_sales(); st.session_state['current_design'] = []; st.success("已售出並完成紀錄"); st.rerun()
+            
+            if st.button("🗑️ 清空設計清單"):
+                st.session_state['current_design'] = []
+                st.rerun()
