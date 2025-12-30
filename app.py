@@ -126,14 +126,6 @@ with st.sidebar:
         st.download_button("📜 下載出入庫紀錄表", csv_hist, f'history_{date.today()}.csv', "text/csv")
 
     st.divider()
-    uploaded_file = st.file_uploader("📤 上傳資料修正位移", type=['csv'])
-    if uploaded_file and st.button("🚨 執行修正匯入"):
-        try:
-            df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-            st.session_state['inventory'] = robust_import_inventory(df)
-            save_inventory(); st.success("欄位已歸位！"); time.sleep(1); st.rerun()
-        except Exception as e: st.error(f"匯入失敗: {e}")
-
     if st.button("🔴 重置系統", type="secondary"):
         st.session_state.clear(); st.rerun()
 
@@ -173,7 +165,6 @@ if page == "📦 庫存管理與進貨":
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             name = c3.text_input("名稱")
             
-            # --- 新增尺寸填寫功能 ---
             st.markdown("##### 📏 規格尺寸")
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -237,7 +228,7 @@ if page == "📦 庫存管理與進貨":
                 c3, c4, c5 = st.columns(3)
                 wm = c3.number_input("寬度mm修正", value=float(orig['寬度mm']))
                 lm = c4.number_input("長度mm修正", value=float(orig['長度mm']))
-                qt = c5.number_input("盤點庫存量修正", min_value=min(0, val), value=val)
+                qt = c5.number_input("盤點庫存量修正", min_value=0, value=val)
                 
                 co = st.number_input("單顆成本修正", min_value=0.0, value=float(orig['單顆成本'])) if st.session_state['admin_mode'] else float(orig['單顆成本'])
                 el = st.selectbox("五行修正", get_dynamic_options('五行', DEFAULT_ELEMENTS), index=0)
@@ -259,14 +250,8 @@ if page == "📦 庫存管理與進貨":
                     st.session_state['inventory'] = st.session_state['inventory'].drop(idx).reset_index(drop=True)
                     save_inventory(); st.warning("已刪除"); st.rerun()
                 else: st.error("權限不足")
-        else: st.info("無資料")
 
     st.divider()
-    if not st.session_state['inventory'].empty:
-        df_s = st.session_state['inventory'].copy()
-        df_s['庫存(顆)'] = pd.to_numeric(df_s['庫存(顆)'], errors='coerce').fillna(0)
-        sum_df = df_s.groupby('倉庫').agg({'編號': 'count', '庫存(顆)': 'sum'}).rename(columns={'編號': '品項數量', '庫存(顆)': '顆數總計'})
-        st.table(sum_df.astype(int))
     vdf = st.session_state['inventory'].copy()
     if not vdf.empty:
         if not st.session_state['admin_mode']:
@@ -286,25 +271,79 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 設計與計算
+# 頁面 C: 設計與計算 (更新版)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
-    st.subheader("🧮 作品設計")
+    st.subheader("🧮 作品設計與成本核算")
+    
     items = st.session_state['inventory'].copy()
     if not items.empty:
+        # 1. 材料選擇區
         items['lbl'] = items.apply(make_inventory_label, axis=1)
-        sel = st.selectbox("選擇材料", items['lbl'], key="design_sel")
+        c1, c2 = st.columns([3, 1])
+        sel = c1.selectbox("選擇材料", items['lbl'], key="design_sel")
         idx = items[items['lbl'] == sel].index[0]
         cur_s = int(float(items.loc[idx, '庫存(顆)']))
-        qty = st.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
+        qty = c2.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
+        
         if st.button("⬇️ 加入清單"):
             if qty > 0:
-                st.session_state['current_design'].append({'編號':items.loc[idx, '編號'], '名稱':items.loc[idx, '名稱'], '數量':qty, '單價':items.loc[idx, '單顆成本']})
+                st.session_state['current_design'].append({
+                    '編號': items.loc[idx, '編號'], 
+                    '名稱': items.loc[idx, '名稱'], 
+                    '數量': qty, 
+                    '單價': items.loc[idx, '單顆成本']
+                })
                 st.rerun()
+
+        # 2. 已選清單顯示
         if st.session_state['current_design']:
+            st.divider()
+            st.markdown("##### 📋 目前設計清單")
             ddf = pd.DataFrame(st.session_state['current_design'])
-            st.table(ddf[['名稱', '數量']] if not st.session_state['admin_mode'] else ddf)
-            if st.button("✅ 售出 (自動扣庫存)"):
+            ddf['小計'] = ddf['數量'] * ddf['單價']
+            
+            # --- 權限控管：員工隱藏價格相關欄位 ---
+            if st.session_state['admin_mode']:
+                display_cols = ['名稱', '數量', '單價', '小計']
+                st.table(ddf[display_cols])
+            else:
+                display_cols = ['名稱', '數量']
+                st.table(ddf[display_cols])
+
+            # --- 3. 額外成本輸入區 (所有人都可填寫) ---
+            st.markdown("##### 💰 額外成本與工資填寫")
+            ec1, ec2, ec3 = st.columns(3)
+            labor_fee = ec1.number_input("工資 (Labor)", min_value=0.0, step=50.0, key="labor_input")
+            misc_fee = ec2.number_input("雜支 (Misc)", min_value=0.0, step=10.0, key="misc_input")
+            ship_fee = ec3.number_input("運費 (Shipping)", min_value=0.0, step=10.0, key="ship_input")
+
+            # --- 4. 總計計算與主管查看區 ---
+            material_subtotal = ddf['小計'].sum()
+            total_cost = material_subtotal + labor_fee + misc_fee + ship_fee
+            
+            if st.session_state['admin_mode']:
+                st.success(f"📊 **主管專用成本總計**")
+                m1, m2 = st.columns(2)
+                m1.metric("材料小計", f"${material_subtotal:.0f}")
+                m2.metric("含工雜運總成本", f"${total_cost:.0f}")
+            else:
+                st.info("💡 成本資訊已隱藏，僅主管可查看結算總計。")
+            
+            # 5. 操作按鈕
+            st.divider()
+            col_btn1, col_btn2 = st.columns(2)
+            if col_btn1.button("✅ 售出 (自動扣庫存)"):
                 for x in st.session_state['current_design']:
                     st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == x['編號'], '庫存(顆)'] -= x['數量']
-                save_inventory(); st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
+                save_inventory()
+                st.session_state['current_design'] = []
+                st.success("庫存已扣除並結案")
+                time.sleep(1)
+                st.rerun()
+                
+            if col_btn2.button("🗑️ 清空設計單", type="secondary"):
+                st.session_state['current_design'] = []
+                st.rerun()
+    else:
+        st.info("庫存為空，請先前往進貨。")
