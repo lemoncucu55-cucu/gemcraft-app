@@ -271,24 +271,31 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 設計與計算 (強制顯示費用填寫區版本)
+# 頁面 C: 設計與計算 (強制顯示費用填寫區 - 終極修正版)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 作品設計與成本核算")
     
-    # 檢查是否有庫存
-    if st.session_state['inventory'].empty:
-        st.info("目前庫存無資料，請先前往進貨。")
-    else:
-        items = st.session_state['inventory'].copy()
+    # --- 💡 這裡做了重大變動：將費用填寫框移到最前面，確保一定會出現 ---
+    with st.expander("💰 第一步：填寫附加費用 (工資/雜支/運費)", expanded=True):
+        f_c1, f_c2, f_c3 = st.columns(3)
+        labor_val = f_c1.number_input("製作工資", min_value=0.0, step=10.0, key="fixed_labor")
+        misc_val = f_c2.number_input("雜支包材", min_value=0.0, step=10.0, key="fixed_misc")
+        ship_val = f_c3.number_input("物流運費", min_value=0.0, step=10.0, key="fixed_ship")
+        st.caption("※ 即使沒有材料，這裡也應該顯示。如果沒看到，請重新整理網頁。")
+
+    st.divider()
+
+    items = st.session_state['inventory'].copy()
+    if not items.empty:
+        # 1. 材料選擇區
+        st.markdown("##### 第二步：選擇材料")
         items['lbl'] = items.apply(make_inventory_label, axis=1)
-        
-        # 1. 選擇區
-        c1, c2 = st.columns([3, 1])
-        sel = c1.selectbox("選擇材料", items['lbl'], key="design_sel")
+        sel_col, qty_col = st.columns([3, 1])
+        sel = sel_col.selectbox("選擇材料", items['lbl'], key="design_sel_v3")
         idx = items[items['lbl'] == sel].index[0]
         cur_s = int(float(items.loc[idx, '庫存(顆)']))
-        qty = c2.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0, key="input_qty")
+        qty = qty_col.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
         
         if st.button("⬇️ 加入清單"):
             if qty > 0:
@@ -303,75 +310,46 @@ elif page == "🧮 設計與成本計算":
                 })
                 st.rerun()
 
-        # 2. 已選清單與填寫區 (這部分是您之前沒看到的區塊)
-        if len(st.session_state['current_design']) > 0:
-            st.markdown("---")
-            st.markdown("### 📋 結算清單")
-            
-            # 顯示表格
+        # 2. 結算清單顯示
+        if st.session_state['current_design']:
+            st.markdown("##### 第三步：確認清單並售出")
             ddf = pd.DataFrame(st.session_state['current_design'])
             ddf['小計'] = ddf['數量'] * ddf['單價']
             
+            # 根據權限顯示欄位
             show_cols = ['名稱', '數量', '單價', '小計'] if st.session_state['admin_mode'] else ['名稱', '數量']
             st.table(ddf[show_cols])
 
-            # --- 💡 強制顯示：費用填寫區 ---
-            with st.container():
-                st.markdown("#### 💰 附加費用 (由員工填寫)")
-                # 使用獨立的三欄位顯示
-                fee_col1, fee_col2, fee_col3 = st.columns(3)
-                
-                # 這裡使用了唯一的 key，確保不會跟其他頁面衝突
-                labor_v = fee_col1.number_input("製作工資", min_value=0.0, step=10.0, value=0.0, key="final_labor")
-                misc_v = fee_col2.number_input("雜支包材", min_value=0.0, step=10.0, value=0.0, key="final_misc")
-                ship_v = fee_col3.number_input("物流運費", min_value=0.0, step=10.0, value=0.0, key="final_ship")
-
-            # 3. 成本計算與顯示
+            # 3. 計算總額
             mat_total = ddf['小計'].sum()
-            extra_total = labor_v + misc_v + ship_v
+            extra_total = labor_val + misc_val + ship_val
             grand_total = mat_total + extra_total
             
             if st.session_state['admin_mode']:
-                st.success(f"📊 主管總成本結算：**${grand_total:,.0f}**")
-                # 細節指標
-                i1, i2 = st.columns(2)
-                i1.metric("材料成本", f"${mat_total:,.0f}")
-                i2.metric("工雜運總計", f"${extra_total:,.0f}")
-            else:
-                st.info("💡 填寫完畢後請按下方按鈕結案。")
-
+                st.info(f"📊 主管總計：材料 ${mat_total:.0f} + 額外 ${extra_total:.0f} = **總成本 ${grand_total:.0f}**")
+            
             # 4. 功能按鈕
-            btn_c1, btn_c2 = st.columns(2)
-            if btn_c1.button("✅ 售出 (扣庫存並存檔)", use_container_width=True):
-                # 執行存檔邏輯 (同前，包含歷史紀錄)
+            b_c1, b_c2 = st.columns(2)
+            if b_c1.button("✅ 確認售出 (扣庫存)", use_container_width=True):
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-                for _, row in ddf.iterrows():
-                    st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == row['編號'], '庫存(顆)'] -= row['數量']
-                    # 存入紀錄
-                    new_log = {
-                        '紀錄時間': ts, '單號': 'SALE', '動作': "作品材料售出",
-                        '倉庫': row['倉庫'], '編號': row['編號'], '分類': row['分類'], 
-                        '名稱': row['名稱'], '規格': row['規格'], '廠商': '-', 
-                        '數量變動': -row['數量'], '進貨總價': 0, '單價': row['單價']
-                    }
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([new_log])], ignore_index=True)
+                # 扣庫存與記錄
+                for _, r in ddf.iterrows():
+                    st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == r['編號'], '庫存(顆)'] -= r['數量']
+                    log = {'紀錄時間': ts, '單號': 'SALE', '動作': "作品售出", '倉庫': r['倉庫'], '編號': r['編號'], '分類': r['分類'], '名稱': r['名稱'], '規格': r['規格'], '廠商': '-', '數量變動': -r['數量'], '進貨總價': 0, '單價': r['單價']}
+                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
                 
-                # 存入附加費用紀錄
+                # 紀錄費用
                 if extra_total > 0:
-                    fee_log = {
-                        '紀錄時間': ts, '單號': 'FEES', '動作': f"售出附加費(工{labor_v}/雜{misc_v}/運{ship_v})",
-                        '倉庫': '-', '編號': '-', '分類': '費用', '名稱': '設計與運費', 
-                        '規格': '-', '廠商': '-', '數量變動': 0, '進貨總價': extra_total, '單價': extra_total
-                    }
-                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([fee_log])], ignore_index=True)
+                    f_log = {'紀錄時間': ts, '單號': 'FEES', '動作': f"附加費(工{labor_val}/雜{misc_val}/運{ship_val})", '倉庫': '-', '編號': '-', '分類': '費用', '名稱': '設計與運費', '規格': '-', '廠商': '-', '數量變動': 0, '進貨總價': extra_total, '單價': extra_total}
+                    st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([f_log])], ignore_index=True)
                 
-                save_inventory()
-                save_history()
-                st.session_state['current_design'] = [] # 清空清單
-                st.success("售出紀錄已成功存入歷史明細！")
-                time.sleep(1)
-                st.rerun()
+                save_inventory(); save_history()
+                st.session_state['current_design'] = []
+                st.success("已完成售出並存入歷史紀錄")
+                time.sleep(1); st.rerun()
 
-            if btn_c2.button("🗑️ 清空清單", use_container_width=True):
+            if b_c2.button("🗑️ 清空設計清單", use_container_width=True):
                 st.session_state['current_design'] = []
                 st.rerun()
+    else:
+        st.info("無庫存資料")
