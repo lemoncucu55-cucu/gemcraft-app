@@ -1,3 +1,6 @@
+st.caption("版本：v2025-12-30（含工資/雜支/運費）")
+
+
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
