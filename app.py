@@ -173,7 +173,6 @@ if page == "📦 庫存管理與進貨":
             cat = c2.selectbox("分類", ["天然石", "配件", "耗材"])
             name = c3.text_input("名稱")
             
-            # --- 新增尺寸填寫功能 ---
             st.markdown("##### 📏 規格尺寸")
             s1, s2, s3 = st.columns(3)
             w_mm = s1.number_input("寬度 (mm)", min_value=0.0, step=0.1, value=0.0)
@@ -286,7 +285,7 @@ elif page == "📜 紀錄明細查詢":
     else: st.info("尚無紀錄")
 
 # ------------------------------------------
-# 頁面 C: 設計與計算
+# 頁面 C: 設計與計算 (新增工資、雜支、運費功能)
 # ------------------------------------------
 elif page == "🧮 設計與成本計算":
     st.subheader("🧮 作品設計")
@@ -296,16 +295,70 @@ elif page == "🧮 設計與成本計算":
         sel = st.selectbox("選擇材料", items['lbl'], key="design_sel")
         idx = items[items['lbl'] == sel].index[0]
         cur_s = int(float(items.loc[idx, '庫存(顆)']))
-        qty = st.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
-        if st.button("⬇️ 加入清單"):
+        
+        c1, c2 = st.columns([3, 1])
+        qty = c1.number_input("數量", min_value=0, max_value=max(0, cur_s), value=0)
+        
+        if c2.button("⬇️ 加入清單"):
             if qty > 0:
-                st.session_state['current_design'].append({'編號':items.loc[idx, '編號'], '名稱':items.loc[idx, '名稱'], '數量':qty, '單價':items.loc[idx, '單顆成本']})
+                st.session_state['current_design'].append({
+                    '編號': items.loc[idx, '編號'], 
+                    '名稱': items.loc[idx, '名稱'], 
+                    '數量': qty, 
+                    '單價': float(items.loc[idx, '單顆成本']),
+                    '小計': float(items.loc[idx, '單顆成本']) * qty
+                })
                 st.rerun()
+        
         if st.session_state['current_design']:
+            st.divider()
             ddf = pd.DataFrame(st.session_state['current_design'])
-            st.table(ddf[['名稱', '數量']] if not st.session_state['admin_mode'] else ddf)
-            if st.button("✅ 售出 (自動扣庫存)"):
+            
+            # 顯示目前材料清單
+            st.markdown("##### 🛒 目前材料清單")
+            st.table(ddf[['名稱', '數量']] if not st.session_state['admin_mode'] else ddf[['名稱', '數量', '單價', '小計']])
+            
+            # --- 新增：工資、雜支、運費填寫區 ---
+            st.markdown("##### 💰 額外成本與計算")
+            col1, col2, col3 = st.columns(3)
+            labor_cost = col1.number_input("工資 (Labor)", min_value=0.0, step=10.0, value=0.0)
+            misc_cost = col2.number_input("雜支 (Misc)", min_value=0.0, step=1.0, value=0.0)
+            shipping_cost = col3.number_input("運費 (Shipping)", min_value=0.0, step=1.0, value=0.0)
+            
+            # 計算總計
+            material_total = ddf['小計'].sum()
+            grand_total = material_total + labor_cost + misc_cost + shipping_cost
+            
+            if st.session_state['admin_mode']:
+                st.info(f"🧱 材料小計: ${material_total:,.2f} | 🛠️ 額外成本: ${(labor_val := labor_cost + misc_cost + shipping_cost):,.2f}")
+                st.metric("作品總成本 (Grand Total)", f"${grand_total:,.2f}")
+                
+                # 建議售價參考
+                s1, s2 = st.columns(2)
+                s1.success(f"建議售價 (x3): ${grand_total * 3:,.0f}")
+                s2.success(f"建議售價 (x5): ${grand_total * 5:,.0f}")
+            
+            # 備註功能
+            design_note = st.text_input("作品名稱 / 備註", placeholder="例如：天然石手鍊 A120")
+            
+            c_a, c_b = st.columns(2)
+            if c_a.button("✅ 售出 (自動扣庫存)"):
                 for x in st.session_state['current_design']:
                     st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == x['編號'], '庫存(顆)'] -= x['數量']
-                save_inventory(); st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
-
+                
+                # 紀錄到歷史明細
+                log_msg = f"作品售出: {design_note} (工資:{labor_cost}, 雜支:{misc_cost}, 運費:{shipping_cost})"
+                log = {
+                    '紀錄時間': datetime.now().strftime("%Y-%m-%d %H:%M"), 
+                    '單號': 'SALE', 
+                    '動作': log_msg, 
+                    '倉庫': '組合出庫', '編號': 'MULTIPLE', '分類': '成品', '名稱': design_note, 
+                    '規格': '-', '廠商': '-', '數量變動': 0, '進貨總價': 0, '單價': grand_total
+                }
+                st.session_state['history'] = pd.concat([st.session_state['history'], pd.DataFrame([log])], ignore_index=True)
+                
+                save_inventory(); save_history(); st.session_state['current_design'] = []; st.success("銷售完成，庫存已扣除"); time.sleep(1); st.rerun()
+                
+            if c_b.button("🗑️ 清空清單"):
+                st.session_state['current_design'] = []
+                st.rerun()
