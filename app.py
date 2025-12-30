@@ -211,7 +211,7 @@ if 'current_design' not in st.session_state:
 
 st.set_page_config(page_title="GemCraft 庫存管理系統", layout="wide")
 st.title("💎 GemCraft 庫存管理系統")
-st.caption("版本：v2025-12-30（含工資/雜支/運費）")
+st.caption("✅ 已更新：v2025-12-30（含工資/雜支/運費）")
 
 with st.sidebar:
     st.header("🔑 權限驗證")
