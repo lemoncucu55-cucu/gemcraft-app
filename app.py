@@ -308,4 +308,3 @@ elif page == "🧮 設計與成本計算":
                 for x in st.session_state['current_design']:
                     st.session_state['inventory'].loc[st.session_state['inventory']['編號'] == x['編號'], '庫存(顆)'] -= x['數量']
                 save_inventory(); st.session_state['current_design'] = []; st.success("庫存已扣除"); st.rerun()
-
